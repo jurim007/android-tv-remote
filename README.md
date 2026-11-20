@@ -12,5 +12,7 @@ Open the project in Android Studio or build the debug APK from the repository ro
 
 The app currently uses a development mock for remote commands. TV discovery, pairing,
 and network control are not implemented, and the UI reports that no TV is connected.
-Installed app shortcuts launch their apps on the phone; shortcut selections are saved
-with DataStore on the phone.
+Configure up to four TV app shortcuts from the device selector's Settings menu. Each
+shortcut stores the TV package ID and an icon uploaded from the phone or downloaded from
+an HTTPS image URL. Shortcut data and the D-pad/touchpad preference are saved with DataStore.
+App launch commands still use the development mock until TV connectivity is implemented.

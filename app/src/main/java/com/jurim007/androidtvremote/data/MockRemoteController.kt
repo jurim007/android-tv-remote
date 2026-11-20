@@ -8,6 +8,8 @@ class MockRemoteController : RemoteController {
     override fun send(command: RemoteCommand) {
         val name = when (command) {
             is RemoteCommand.SendText -> "SendText(length=${command.text.length})"
+            is RemoteCommand.LaunchApp ->
+                "LaunchApp(packageName=${command.packageName})"
             else -> command.toString()
         }
         Log.d(TAG, "Development mock command: $name")

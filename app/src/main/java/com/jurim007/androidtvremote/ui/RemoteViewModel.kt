@@ -7,6 +7,7 @@ import com.jurim007.androidtvremote.data.AppShortcutPreferences
 import com.jurim007.androidtvremote.data.MockRemoteController
 import com.jurim007.androidtvremote.domain.PressAndHoldController
 import com.jurim007.androidtvremote.domain.RemoteCommand
+import com.jurim007.androidtvremote.domain.TvAppShortcut
 import kotlinx.coroutines.launch
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
@@ -15,15 +16,22 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         PressAndHoldController(viewModelScope, remoteController)
     private val shortcutPreferences = AppShortcutPreferences(application)
 
-    val shortcutPackages = shortcutPreferences.packageNames
+    val shortcuts = shortcutPreferences.shortcuts
+    val touchpadEnabled = shortcutPreferences.touchpadEnabled
 
     fun send(command: RemoteCommand) {
         remoteController.send(command)
     }
 
-    fun saveShortcutPackages(packageNames: List<String>) {
+    fun saveShortcuts(shortcuts: List<TvAppShortcut>) {
         viewModelScope.launch {
-            shortcutPreferences.savePackageNames(packageNames)
+            shortcutPreferences.saveShortcuts(shortcuts)
+        }
+    }
+
+    fun setTouchpadEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            shortcutPreferences.setTouchpadEnabled(enabled)
         }
     }
 

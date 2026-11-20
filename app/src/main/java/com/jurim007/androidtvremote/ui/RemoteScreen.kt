@@ -1,17 +1,15 @@
 package com.jurim007.androidtvremote.ui
 
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
-import android.graphics.drawable.Drawable
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.Image
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,15 +22,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -51,6 +46,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -63,20 +59,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -89,23 +86,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.rememberUpdatedState
 import com.jurim007.androidtvremote.domain.RemoteCommand
+import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
-import com.jurim007.androidtvremote.ui.theme.RemoteBackground
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
 import com.jurim007.androidtvremote.ui.theme.RemoteSurface
 import com.jurim007.androidtvremote.ui.theme.RemoteSurfaceHighlight
 import com.jurim007.androidtvremote.ui.theme.RemoteText
+import kotlin.math.abs
 
 private val SurfaceShape = RoundedCornerShape(34.dp)
 
@@ -114,6 +108,9 @@ fun RemoteScreen(
     modifier: Modifier = Modifier,
     viewModel: RemoteViewModel = viewModel(),
 ) {
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -138,7 +135,7 @@ fun RemoteScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 20.dp, vertical = 4.dp),
+            .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 4.dp),
     ) {
         val sideWidth = (maxWidth * 0.18f).coerceIn(56.dp, 72.dp)
         val dpadHeight = (maxWidth * 0.73f)
@@ -164,18 +161,27 @@ fun RemoteScreen(
         ) {
             DeviceHeader(
                 onCommand = viewModel::send,
+                onOpenSettings = { settingsOpen = true },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(headerHeight),
             )
             Spacer(Modifier.height(topGap))
             AppShortcutsRow(
-                viewModel = viewModel,
+                shortcuts = shortcuts,
+                onLaunchApp = { shortcut ->
+                    viewModel.send(
+                        RemoteCommand.LaunchApp(
+                            packageName = shortcut.packageName,
+                        ),
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(remoteGap))
             RemoteControls(
                 viewModel = viewModel,
+                touchpadEnabled = touchpadEnabled,
                 sideWidth = sideWidth,
                 dpadHeight = dpadHeight,
                 bottomButtonSize = bottomButtonSize,
@@ -190,11 +196,21 @@ fun RemoteScreen(
             )
         }
     }
+    if (settingsOpen) {
+        RemoteSettingsDialog(
+            shortcuts = shortcuts,
+            touchpadEnabled = touchpadEnabled,
+            onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
+            onShortcutsChange = viewModel::saveShortcuts,
+            onDismiss = { settingsOpen = false },
+        )
+    }
 }
 
 @Composable
 private fun DeviceHeader(
     onCommand: (RemoteCommand) -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -252,8 +268,12 @@ private fun DeviceHeader(
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false },
                 modifier = Modifier
-                    .background(RemoteSurface)
                     .widthIn(min = 220.dp),
+                shape = RoundedCornerShape(24.dp),
+                containerColor = Color(0xE611121E),
+                tonalElevation = 0.dp,
+                shadowElevation = 18.dp,
+                border = BorderStroke(1.dp, RemoteBorder.copy(alpha = 0.74f)),
             ) {
                 DropdownMenuItem(
                     text = { Text("No saved TVs") },
@@ -280,7 +300,7 @@ private fun DeviceHeader(
                     text = { Text("Settings") },
                     onClick = {
                         menuExpanded = false
-                        infoMessage = "Settings are not part of this first milestone."
+                        onOpenSettings()
                     },
                 )
             }
@@ -312,254 +332,59 @@ private fun DeviceHeader(
     }
 }
 
-private data class InstalledApp(
-    val packageName: String,
-    val label: String,
-    val icon: Drawable,
-)
-
 @Composable
 private fun AppShortcutsRow(
-    viewModel: RemoteViewModel,
+    shortcuts: List<TvAppShortcut>,
+    onLaunchApp: (TvAppShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val installedApps = remember(context) {
-        loadInstalledApps(context.packageManager, context.packageName)
-    }
-    val savedPackages by viewModel.shortcutPackages.collectAsStateWithLifecycle(
-        initialValue = recommendedAppPackages,
-    )
-    val selectedPackages = savedPackages
-        .filter { packageName -> installedApps.any { it.packageName == packageName } }
-        .take(4)
-    var pickerOpen by remember { mutableStateOf(false) }
-    val selectedApps = selectedPackages.mapNotNull { packageName ->
-        installedApps.firstOrNull { it.packageName == packageName }
-    }
-
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        selectedApps.forEach { app ->
-            AppShortcutTile(
-                app = app,
-                onClick = {
-                    context.packageManager.getLaunchIntentForPackage(app.packageName)?.let {
-                        context.startActivity(it)
-                    }
-                },
-                onRemove = {
-                    viewModel.saveShortcutPackages(selectedPackages - app.packageName)
-                },
-                modifier = Modifier.weight(1f),
-            )
-        }
-        AddShortcutTile(
-            onClick = { pickerOpen = true },
-            modifier = Modifier.weight(1f),
-        )
-        repeat((4 - selectedApps.size).coerceAtLeast(0)) {
-            Spacer(Modifier.weight(1f))
-        }
-    }
-
-    if (pickerOpen) {
-        val availableApps = installedApps.filterNot { it.packageName in selectedPackages }
-        AppPickerDialog(
-            apps = availableApps,
-            canAddMore = selectedPackages.size < 4,
-            onSelect = { app ->
-                if (selectedPackages.size < 4) {
-                    viewModel.saveShortcutPackages(selectedPackages + app.packageName)
-                }
-                pickerOpen = false
-            },
-            onDismiss = { pickerOpen = false },
-        )
-    }
-}
-
-@Composable
-private fun AppShortcutTile(
-    app: InstalledApp,
-    onClick: () -> Unit,
-    onRemove: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val bitmap = remember(app.icon) {
-        app.icon.toBitmap(width = 128, height = 128).asImageBitmap()
-    }
-    Box(
-        modifier = modifier
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(19.dp))
-            .background(surfaceBrush())
-            .border(1.dp, RemoteBorder.copy(alpha = 0.78f), RoundedCornerShape(19.dp))
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onRemove,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = app.label,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(8.dp),
-        )
-    }
-}
-
-@Composable
-private fun AddShortcutTile(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    RemoteTapTarget(
-        description = "Add app shortcut",
-        onClick = onClick,
-        modifier = modifier.aspectRatio(1f),
-        shape = RoundedCornerShape(19.dp),
-        background = surfaceBrush(),
-        border = RemoteBorder.copy(alpha = 0.7f),
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Add,
-            contentDescription = null,
-            tint = RemoteAccent,
-            modifier = Modifier.size(34.dp),
-        )
-    }
-}
-
-@Composable
-private fun AppPickerDialog(
-    apps: List<InstalledApp>,
-    canAddMore: Boolean,
-    onSelect: (InstalledApp) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.88f)
-                .heightIn(max = 540.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(RemoteSurface)
-                .border(1.dp, RemoteBorder, RoundedCornerShape(28.dp))
-                .padding(20.dp),
+    if (shortcuts.isEmpty()) {
+        Box(
+            modifier = modifier.height(82.dp),
+            contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                text = "Add app shortcut",
-                color = RemoteText,
-                style = MaterialTheme.typography.titleLarge,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = if (canAddMore) {
-                    "Choose an installed app. Long-press a shortcut to remove it."
-                } else {
-                    "You already have four shortcuts. Long-press one to remove it first."
-                },
+                text = "Add TV app shortcuts in Settings",
                 color = RemoteMuted,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
             )
-            Spacer(Modifier.height(12.dp))
-            if (!canAddMore) {
-                Text(
-                    text = "Remove a shortcut before adding another.",
-                    color = RemoteMuted,
-                    modifier = Modifier.padding(vertical = 18.dp),
-                )
-            } else if (apps.isEmpty()) {
-                Text(
-                    text = "No more launchable apps were found.",
-                    color = RemoteMuted,
-                    modifier = Modifier.padding(vertical = 18.dp),
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 360.dp),
+        }
+    } else {
+        Row(
+            modifier = modifier.height(82.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            shortcuts.take(4).forEach { shortcut ->
+                RemoteTapTarget(
+                    description = shortcut.name,
+                    onClick = { onLaunchApp(shortcut) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .aspectRatio(1f),
+                    shape = RoundedCornerShape(19.dp),
+                    background = surfaceBrush(),
+                    border = RemoteBorder.copy(alpha = 0.78f),
                 ) {
-                    items(apps, key = InstalledApp::packageName) { app ->
-                        val iconBitmap = remember(app.icon) {
-                            app.icon.toBitmap(width = 96, height = 96).asImageBitmap()
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .combinedClickable(
-                                    onClick = { if (canAddMore) onSelect(app) },
-                                    onLongClick = {},
-                                )
-                                .padding(vertical = 9.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Image(
-                                bitmap = iconBitmap,
-                                contentDescription = null,
-                                modifier = Modifier.size(38.dp),
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Text(
-                                text = app.label,
-                                color = if (canAddMore) RemoteText else RemoteMuted,
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                    }
+                    ShortcutIcon(
+                        shortcut = shortcut,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.End),
-            ) {
-                Text("Close")
+            repeat((4 - shortcuts.size).coerceAtLeast(0)) {
+                Spacer(Modifier.weight(1f))
             }
         }
     }
 }
-
-private fun loadInstalledApps(
-    packageManager: PackageManager,
-    ownPackageName: String,
-): List<InstalledApp> {
-    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
-        .mapNotNull { resolveInfo ->
-            val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
-            val packageName = activityInfo.packageName
-            if (packageName == ownPackageName) return@mapNotNull null
-            InstalledApp(
-                packageName = packageName,
-                label = resolveInfo.loadLabel(packageManager).toString(),
-                icon = resolveInfo.loadIcon(packageManager),
-            )
-        }
-        .distinctBy(InstalledApp::packageName)
-        .sortedBy { it.label.lowercase() }
-}
-
-private val recommendedAppPackages = listOf(
-    "com.netflix.mediaclient",
-    "com.google.android.youtube.tv",
-    "com.google.android.youtube",
-    "com.amazon.amazonvideo.livingroom",
-    "com.disney.disneyplus",
-)
 
 @Composable
 private fun RemoteControls(
     viewModel: RemoteViewModel,
+    touchpadEnabled: Boolean,
     sideWidth: androidx.compose.ui.unit.Dp,
     dpadHeight: androidx.compose.ui.unit.Dp,
     bottomButtonSize: androidx.compose.ui.unit.Dp,
@@ -583,12 +408,21 @@ private fun RemoteControls(
                 groupDescription = "Volume",
                 modifier = Modifier.fillMaxHeight(),
             )
-            DPad(
-                viewModel = viewModel,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            )
+            if (touchpadEnabled) {
+                Touchpad(
+                    viewModel = viewModel,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+            } else {
+                DPad(
+                    viewModel = viewModel,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                )
+            }
             SideControl(
                 width = sideWidth,
                 repeatCommands = listOf(RemoteCommand.ChannelUp, RemoteCommand.ChannelDown),
@@ -821,6 +655,80 @@ private fun DPad(
 }
 
 @Composable
+private fun Touchpad(
+    viewModel: RemoteViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val thresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(36.dp))
+            .background(surfaceBrush())
+            .border(1.5.dp, RemoteBorder.copy(alpha = 0.9f), RoundedCornerShape(36.dp))
+            .pointerInput(viewModel, thresholdPx) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var end = down.position
+                    var swiped = false
+                    while (!swiped) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        end = change.position
+                        val delta = end - down.position
+                        val horizontal = abs(delta.x) >= abs(delta.y)
+                        val distance = if (horizontal) abs(delta.x) else abs(delta.y)
+                        if (distance >= thresholdPx) {
+                            val command = if (horizontal) {
+                                if (delta.x > 0) RemoteCommand.Right else RemoteCommand.Left
+                            } else {
+                                if (delta.y > 0) RemoteCommand.Down else RemoteCommand.Up
+                            }
+                            viewModel.send(command)
+                            swiped = true
+                        }
+                        if (!change.pressed) break
+                    }
+                    if (!swiped && end.x >= 0f && end.y >= 0f &&
+                        end.x < size.width && end.y < size.height
+                    ) {
+                        viewModel.send(RemoteCommand.Select)
+                    }
+                }
+            }
+            .semantics {
+                role = Role.Button
+                contentDescription = "Touchpad. Swipe to navigate, tap to select."
+                onClick(label = "Select") {
+                    viewModel.send(RemoteCommand.Select)
+                    true
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Filled.TouchApp,
+                contentDescription = null,
+                tint = RemoteText,
+                modifier = Modifier.size(38.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Swipe to navigate",
+                color = RemoteText,
+                fontSize = 15.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Tap to select",
+                color = RemoteMuted,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
 private fun UtilityBar(
     onCommand: (RemoteCommand) -> Unit,
     modifier: Modifier = Modifier,
@@ -946,8 +854,17 @@ private fun TypeTextDialog(
     onDismiss: () -> Unit,
 ) {
     var value by rememberSaveable { mutableStateOf("") }
+    val dialogShape = RoundedCornerShape(28.dp)
     AlertDialog(
+        modifier = Modifier.border(
+            1.dp,
+            RemoteBorder.copy(alpha = 0.88f),
+            dialogShape,
+        ),
         onDismissRequest = onDismiss,
+        shape = dialogShape,
+        containerColor = Color(0xF011121E),
+        tonalElevation = 0.dp,
         title = { Text("Type to TV") },
         text = {
             OutlinedTextField(
@@ -1048,6 +965,11 @@ private fun ControlGlyph(
     modifier: Modifier = Modifier,
     pressed: Boolean,
 ) {
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (pressed) 0.14f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "remoteControlGlow",
+    )
     val tint by animateColorAsState(
         targetValue = if (pressed) Color.White else RemoteText,
         label = "remoteControlTint",
@@ -1055,7 +977,7 @@ private fun ControlGlyph(
     Box(
         modifier = Modifier
             .clip(CircleShape)
-            .background(if (pressed) RemoteAccent.copy(alpha = 0.13f) else Color.Transparent),
+            .background(RemoteAccent.copy(alpha = glowAlpha)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -1077,12 +999,22 @@ private fun RemoteTapTarget(
     border: Color,
     content: @Composable () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (pressed) 0.12f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "remoteTapGlow",
+    )
     Box(
         modifier = modifier
             .clip(shape)
             .background(background)
+            .background(RemoteAccent.copy(alpha = glowAlpha), shape)
             .border(1.dp, border, shape)
             .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
                 role = Role.Button,
                 onClickLabel = description,
                 onClick = onClick,
