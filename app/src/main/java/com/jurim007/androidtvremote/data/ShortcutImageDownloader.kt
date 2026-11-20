@@ -13,6 +13,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object ShortcutImageDownloader {
+    suspend fun copyFromUri(context: Context, sourceUri: Uri): String =
+        withContext(Dispatchers.IO) {
+            val bytes = context.contentResolver.openInputStream(sourceUri)?.use(::readImageBytes)
+                ?: throw IOException("Could not open the selected image.")
+            validateImage(bytes)
+            storeImage(context, bytes)
+        }
+
     suspend fun download(context: Context, imageUrl: String): String =
         withContext(Dispatchers.IO) {
             var currentUrl = URL(imageUrl)
@@ -35,16 +43,8 @@ object ShortcutImageDownloader {
                             }
                             val bytes = connection.inputStream.use(::readImageBytes)
                             validateImage(bytes)
-
-                            val directory = File(context.filesDir, ICON_DIRECTORY)
-                            if (!directory.exists() && !directory.mkdirs()) {
-                                throw IOException("Could not save the selected icon.")
-                            }
-                            val imageFile = File(directory, "${UUID.randomUUID()}.image")
-                            imageFile.outputStream().use { it.write(bytes) }
-                            return@withContext Uri.fromFile(imageFile).toString()
+                            return@withContext storeImage(context, bytes)
                         }
-
                         HttpsURLConnection.HTTP_MOVED_PERM,
                         HttpsURLConnection.HTTP_MOVED_TEMP,
                         HTTP_SEE_OTHER,
@@ -71,6 +71,16 @@ object ShortcutImageDownloader {
             }
             throw IOException("Could not download the image.")
         }
+
+    private fun storeImage(context: Context, bytes: ByteArray): String {
+        val directory = File(context.filesDir, ICON_DIRECTORY)
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IOException("Could not save the selected icon.")
+        }
+        val imageFile = File(directory, "${UUID.randomUUID()}.image")
+        imageFile.outputStream().use { it.write(bytes) }
+        return Uri.fromFile(imageFile).toString()
+    }
 
     private fun readImageBytes(input: java.io.InputStream): ByteArray {
         val output = ByteArrayOutputStream()

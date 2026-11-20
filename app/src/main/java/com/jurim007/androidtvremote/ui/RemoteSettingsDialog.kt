@@ -1,8 +1,8 @@
 package com.jurim007.androidtvremote.ui
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,6 +62,7 @@ import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
 import com.jurim007.androidtvremote.ui.theme.RemoteSurface
 import com.jurim007.androidtvremote.ui.theme.RemoteText
+import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,6 +77,8 @@ fun RemoteSettingsDialog(
     onDismiss: () -> Unit,
 ) {
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
+    var editingPackageName by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingShortcut = shortcuts.firstOrNull { it.packageName == editingPackageName }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -99,19 +102,37 @@ fun RemoteSettingsDialog(
                 .verticalScroll(rememberScrollState()),
         ) {
             Text(
-                text = if (addingShortcut) "Add TV app" else "Settings",
+                text = when {
+                    editingShortcut != null -> "Edit TV app"
+                    addingShortcut -> "Add TV app"
+                    else -> "Settings"
+                },
                 color = RemoteText,
                 style = MaterialTheme.typography.titleLarge,
             )
             Spacer(Modifier.height(16.dp))
-            if (addingShortcut) {
+            if (addingShortcut || editingShortcut != null) {
                 AddTvAppForm(
                     existingShortcuts = shortcuts,
+                    initialShortcut = editingShortcut,
                     onSave = { shortcut ->
-                        onShortcutsChange(shortcuts + shortcut)
+                        val oldPackageName = editingShortcut?.packageName
+                        onShortcutsChange(
+                            if (oldPackageName == null) {
+                                shortcuts + shortcut
+                            } else {
+                                shortcuts.map { existing ->
+                                    if (existing.packageName == oldPackageName) shortcut else existing
+                                }
+                            },
+                        )
                         addingShortcut = false
+                        editingPackageName = null
                     },
-                    onCancel = { addingShortcut = false },
+                    onCancel = {
+                        addingShortcut = false
+                        editingPackageName = null
+                    },
                 )
             } else {
                 Row(
@@ -155,6 +176,7 @@ fun RemoteSettingsDialog(
                     shortcuts.forEach { shortcut ->
                         ShortcutSettingsRow(
                             shortcut = shortcut,
+                            onEdit = { editingPackageName = shortcut.packageName },
                             onRemove = {
                                 onShortcutsChange(shortcuts - shortcut)
                             },
@@ -185,34 +207,42 @@ fun RemoteSettingsDialog(
 @Composable
 private fun AddTvAppForm(
     existingShortcuts: List<TvAppShortcut>,
+    initialShortcut: TvAppShortcut?,
     onSave: (TvAppShortcut) -> Unit,
     onCancel: () -> Unit,
 ) {
     val context = LocalContext.current
-    var name by rememberSaveable { mutableStateOf("") }
-    var packageName by rememberSaveable { mutableStateOf("") }
-    var imageUrl by rememberSaveable { mutableStateOf("") }
-    var iconUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var name by rememberSaveable(initialShortcut?.packageName) {
+        mutableStateOf(initialShortcut?.name.orEmpty())
+    }
+    var packageName by rememberSaveable(initialShortcut?.packageName) {
+        mutableStateOf(initialShortcut?.packageName.orEmpty())
+    }
+    var imageUrl by rememberSaveable(initialShortcut?.packageName) { mutableStateOf("") }
+    var iconUri by rememberSaveable(initialShortcut?.packageName) {
+        mutableStateOf(initialShortcut?.iconUri)
+    }
     var validationMessage by remember { mutableStateOf<String?>(null) }
-    var iconPermissionError by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
+    var iconLoadError by remember { mutableStateOf(false) }
+    var processingImage by remember { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-                iconUri = uri.toString()
-                imageUrl = ""
-                iconPermissionError = false
-            } catch (_: SecurityException) {
-                iconPermissionError = true
-            } catch (_: IllegalArgumentException) {
-                iconPermissionError = true
+            scope.launch {
+                processingImage = true
+                try {
+                    iconUri = ShortcutImageDownloader.copyFromUri(context, uri)
+                    imageUrl = ""
+                    iconLoadError = false
+                } catch (_: IOException) {
+                    iconLoadError = true
+                } catch (_: SecurityException) {
+                    iconLoadError = true
+                } finally {
+                    processingImage = false
+                }
             }
         }
     }
@@ -286,9 +316,9 @@ private fun AddTvAppForm(
             Text(if (iconUri == null) "Choose icon" else "Change icon")
         }
     }
-    if (iconPermissionError) {
+    if (iconLoadError) {
         Text(
-            text = "Could not retain access to that image. Please choose another one.",
+            text = "Could not copy that image. Please choose another one.",
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -330,12 +360,15 @@ private fun AddTvAppForm(
                     name.isBlank() -> validationMessage = "Enter an app name."
                     !PACKAGE_ID.matches(normalizedPackage) ->
                         validationMessage = "Enter a valid package ID, such as com.example.tvapp."
-                    existingShortcuts.any { it.packageName == normalizedPackage } ->
+                    existingShortcuts.any {
+                        it.packageName == normalizedPackage &&
+                            it.packageName != initialShortcut?.packageName
+                    } ->
                         validationMessage = "That package ID is already in your shortcuts."
                     normalizedImageUrl != null && !imageUrlIsHttps ->
                         validationMessage = "Use a complete HTTPS link to an image."
                     normalizedImageUrl != null -> scope.launch {
-                        saving = true
+                        processingImage = true
                         validationMessage = null
                         try {
                             val downloadedImage =
@@ -351,7 +384,7 @@ private fun AddTvAppForm(
                             validationMessage =
                                 "Couldn't download that image. Check the HTTPS link and try again."
                         } finally {
-                            saving = false
+                            processingImage = false
                         }
                     }
                     else -> onSave(
@@ -363,9 +396,15 @@ private fun AddTvAppForm(
                     )
                 }
             },
-            enabled = !saving,
+            enabled = !processingImage,
         ) {
-            Text(if (saving) "Downloading…" else "Save app")
+            Text(
+                when {
+                    !processingImage -> if (initialShortcut == null) "Add app" else "Save changes"
+                    imageUrl.isNotBlank() -> "Downloading…"
+                    else -> "Loading image…"
+                },
+            )
         }
     }
 }
@@ -373,6 +412,7 @@ private fun AddTvAppForm(
 @Composable
 private fun ShortcutSettingsRow(
     shortcut: TvAppShortcut,
+    onEdit: () -> Unit,
     onRemove: () -> Unit,
 ) {
     Row(
@@ -395,8 +435,13 @@ private fun ShortcutSettingsRow(
                 maxLines = 1,
             )
         }
-        TextButton(onClick = onRemove) {
-            Text("Remove")
+        Row {
+            TextButton(onClick = onEdit) {
+                Text("Edit")
+            }
+            TextButton(onClick = onRemove) {
+                Text("Remove")
+            }
         }
     }
 }
@@ -445,10 +490,12 @@ private fun rememberShortcutIconBitmap(iconUri: String?): State<ImageBitmap?> {
 private fun loadIconBitmap(context: Context, uriString: String): ImageBitmap? =
     try {
         val uri = uriString.toUri()
+        val openStream = { openIconStream(context, uri) }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
+        val boundsStream = openStream() ?: return null
+        boundsStream.use {
             BitmapFactory.decodeStream(it, null, bounds)
-        } ?: return null
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sampleSize = 1
@@ -456,7 +503,7 @@ private fun loadIconBitmap(context: Context, uriString: String): ImageBitmap? =
             sampleSize *= 2
         }
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        context.contentResolver.openInputStream(uri)
+        openStream()
             ?.use { BitmapFactory.decodeStream(it, null, options) }
             ?.asImageBitmap()
     } catch (error: IOException) {
@@ -465,6 +512,13 @@ private fun loadIconBitmap(context: Context, uriString: String): ImageBitmap? =
     } catch (error: SecurityException) {
         Log.w(TAG, "Shortcut icon permission is no longer available", error)
         null
+    }
+
+private fun openIconStream(context: Context, uri: Uri) =
+    if (uri.scheme == "file") {
+        uri.path?.let(::File)?.inputStream()
+    } else {
+        context.contentResolver.openInputStream(uri)
     }
 
 private const val TAG = "RemoteSettings"

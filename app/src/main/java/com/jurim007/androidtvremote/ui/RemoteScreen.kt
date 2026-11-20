@@ -137,22 +137,24 @@ fun RemoteScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 4.dp),
     ) {
+        // Keep IME-driven height changes from reflowing the controls behind dialogs.
+        val layoutHeight = remember(maxWidth) { maxHeight }
         val sideWidth = (maxWidth * 0.18f).coerceIn(56.dp, 72.dp)
         val dpadHeight = (maxWidth * 0.73f)
-            .coerceAtMost(maxHeight * 0.36f)
+            .coerceAtMost(layoutHeight * 0.36f)
             .coerceAtLeast(150.dp)
-        val compact = maxHeight < 740.dp
-        val headerHeight = if (maxHeight < 620.dp) 56.dp else 66.dp
-        val topGap = if (compact) (maxHeight * 0.03f).coerceAtLeast(10.dp) else 24.dp
+        val compact = layoutHeight < 740.dp
+        val headerHeight = if (layoutHeight < 620.dp) 56.dp else 66.dp
+        val topGap = if (compact) (layoutHeight * 0.03f).coerceAtLeast(10.dp) else 24.dp
         val remoteGap = if (compact) {
-            (maxHeight * 0.045f).coerceAtLeast(12.dp)
+            (layoutHeight * 0.045f).coerceAtLeast(12.dp)
         } else {
             54.dp
         }
-        val utilityGap = if (compact) (maxHeight * 0.025f).coerceAtLeast(10.dp) else 24.dp
-        val utilityHeight = if (maxHeight < 620.dp) 60.dp else 72.dp
+        val utilityGap = if (compact) (layoutHeight * 0.025f).coerceAtLeast(10.dp) else 24.dp
+        val utilityHeight = if (layoutHeight < 620.dp) 60.dp else 72.dp
         val bottomButtonSize = (sideWidth + 4.dp).coerceAtMost(
-            if (maxHeight < 620.dp) 64.dp else 76.dp,
+            if (layoutHeight < 620.dp) 64.dp else 76.dp,
         )
 
         Column(
