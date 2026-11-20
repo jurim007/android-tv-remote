@@ -55,10 +55,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +96,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.TvAppShortcut
+import com.jurim007.androidtvremote.domain.TvConnectionPhase
+import com.jurim007.androidtvremote.domain.TvConnectionState
+import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -109,12 +115,36 @@ fun RemoteScreen(
     viewModel: RemoteViewModel = viewModel(),
 ) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var connectionDialogMode by rememberSaveable { mutableStateOf<String?>(null) }
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = emptyList())
     val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val savedTvs by viewModel.savedTvs.collectAsStateWithLifecycle()
+    val selectedTvId by viewModel.selectedTvId.collectAsStateWithLifecycle()
+    val discoveredDevices by viewModel.discoveredDevices.collectAsStateWithLifecycle()
+    val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+    val selectedTv = savedTvs.firstOrNull { it.id == selectedTvId } ?: connectionState.device
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            snackbarHostState.showSnackbar(message)
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, viewModel) {
+    DisposableEffect(lifecycleOwner, viewModel, connectionDialogMode) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.stopHolding()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    viewModel.stopHolding()
+                    viewModel.stopDiscovery()
+                    viewModel.cancelPairing()
+                }
+
+                Lifecycle.Event.ON_START -> {
+                    if (connectionDialogMode == "add") viewModel.startDiscovery()
+                }
+
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
@@ -162,6 +192,12 @@ fun RemoteScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             DeviceHeader(
+                selectedTv = selectedTv,
+                savedTvs = savedTvs,
+                connectionState = connectionState,
+                onSelectTv = viewModel::connect,
+                onAddTv = { connectionDialogMode = "add" },
+                onManageTvs = { connectionDialogMode = "manage" },
                 onCommand = viewModel::send,
                 onOpenSettings = { settingsOpen = true },
                 modifier = Modifier
@@ -175,6 +211,7 @@ fun RemoteScreen(
                     viewModel.send(
                         RemoteCommand.LaunchApp(
                             packageName = shortcut.packageName,
+                            launchUri = shortcut.launchUri,
                         ),
                     )
                 },
@@ -197,6 +234,12 @@ fun RemoteScreen(
                     .height(utilityHeight),
             )
         }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp),
+        )
     }
     if (settingsOpen) {
         RemoteSettingsDialog(
@@ -204,19 +247,57 @@ fun RemoteScreen(
             touchpadEnabled = touchpadEnabled,
             onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
             onShortcutsChange = viewModel::saveShortcuts,
+            connectionState = connectionState,
             onDismiss = { settingsOpen = false },
+        )
+    }
+    connectionDialogMode?.let { mode ->
+        TvConnectionDialog(
+            savedTvs = savedTvs,
+            discoveredDevices = discoveredDevices,
+            connectionState = connectionState,
+            manageOnly = mode == "manage",
+            onStartDiscovery = viewModel::startDiscovery,
+            onStopDiscovery = viewModel::stopDiscovery,
+            onBeginPairing = viewModel::beginPairing,
+            onCompletePairing = viewModel::completePairing,
+            onConnect = viewModel::connect,
+            onRemove = viewModel::removeTv,
+            onCancelPairing = viewModel::cancelPairing,
+            onDismiss = { connectionDialogMode = null },
         )
     }
 }
 
 @Composable
 private fun DeviceHeader(
+    selectedTv: TvDevice?,
+    savedTvs: List<TvDevice>,
+    connectionState: TvConnectionState,
+    onSelectTv: (TvDevice) -> Unit,
+    onAddTv: () -> Unit,
+    onManageTvs: () -> Unit,
     onCommand: (RemoteCommand) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    var infoMessage by remember { mutableStateOf<String?>(null) }
+    val isSelectedConnected =
+        selectedTv != null &&
+            connectionState.device?.id == selectedTv.id &&
+            connectionState.phase == TvConnectionPhase.CONNECTED
+    val connectionColor = when {
+        isSelectedConnected -> Color(0xFF52D18A)
+        selectedTv != null &&
+            connectionState.device?.id == selectedTv.id &&
+            connectionState.phase in setOf(TvConnectionPhase.CONNECTING, TvConnectionPhase.PAIRING) ->
+            Color(0xFFFFC857)
+        selectedTv != null &&
+            connectionState.device?.id == selectedTv.id &&
+            connectionState.phase == TvConnectionPhase.ERROR ->
+            Color(0xFFFF7373)
+        else -> Color(0xFF777887)
+    }
 
     Row(
         modifier = modifier
@@ -245,7 +326,7 @@ private fun DeviceHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Select a TV",
+                    text = selectedTv?.name ?: "Select a TV",
                     color = RemoteText,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
@@ -256,7 +337,7 @@ private fun DeviceHeader(
                 Box(
                     Modifier
                         .size(9.dp)
-                        .background(Color(0xFF777887), CircleShape),
+                        .background(connectionColor, CircleShape),
                 )
                 Spacer(Modifier.width(12.dp))
                 Icon(
@@ -277,25 +358,56 @@ private fun DeviceHeader(
                 shadowElevation = 18.dp,
                 border = BorderStroke(1.dp, RemoteBorder.copy(alpha = 0.74f)),
             ) {
-                DropdownMenuItem(
-                    text = { Text("No saved TVs") },
-                    onClick = {},
-                    enabled = false,
-                )
+                if (savedTvs.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("No saved TVs") },
+                        onClick = {},
+                        enabled = false,
+                    )
+                } else {
+                    savedTvs.forEach { device ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                if (
+                                                    isSelectedConnected &&
+                                                    connectionState.device.id == device.id
+                                                ) {
+                                                    Color(0xFF52D18A)
+                                                } else {
+                                                    Color(0xFF777887)
+                                                },
+                                                CircleShape,
+                                            ),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(device.name)
+                                }
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onSelectTv(device)
+                            },
+                        )
+                    }
+                }
                 HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
                 DropdownMenuItem(
                     text = { Text("Add TV") },
                     onClick = {
                         menuExpanded = false
-                        infoMessage =
-                            "TV discovery and pairing will be added in a future milestone. No TV is connected."
+                        onAddTv()
                     },
                 )
                 DropdownMenuItem(
                     text = { Text("Manage TVs") },
                     onClick = {
                         menuExpanded = false
-                        infoMessage = "There are no saved TVs to manage."
+                        onManageTvs()
                     },
                 )
                 DropdownMenuItem(
@@ -328,9 +440,6 @@ private fun DeviceHeader(
                 modifier = Modifier.size(34.dp),
             )
         }
-    }
-    infoMessage?.let { message ->
-        MessageDialog(message = message, onDismiss = { infoMessage = null })
     }
 }
 
@@ -526,10 +635,7 @@ private fun SideControl(
                     },
                     onStart = { viewModel.startHolding(command) },
                     onStop = viewModel::stopHolding,
-                    onAccessibleClick = {
-                        viewModel.startHolding(command)
-                        viewModel.stopHolding()
-                    },
+                    onAccessibleClick = { viewModel.send(command) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(68.dp),
@@ -562,10 +668,7 @@ private fun DPad(
             description = "Navigate up",
             onStart = { viewModel.startHolding(RemoteCommand.Up) },
             onStop = viewModel::stopHolding,
-            onAccessibleClick = {
-                viewModel.startHolding(RemoteCommand.Up)
-                viewModel.stopHolding()
-            },
+            onAccessibleClick = { viewModel.send(RemoteCommand.Up) },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 12.dp)
@@ -582,10 +685,7 @@ private fun DPad(
             description = "Navigate left",
             onStart = { viewModel.startHolding(RemoteCommand.Left) },
             onStop = viewModel::stopHolding,
-            onAccessibleClick = {
-                viewModel.startHolding(RemoteCommand.Left)
-                viewModel.stopHolding()
-            },
+            onAccessibleClick = { viewModel.send(RemoteCommand.Left) },
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .width(arrowWidth)
@@ -601,10 +701,7 @@ private fun DPad(
             description = "Navigate right",
             onStart = { viewModel.startHolding(RemoteCommand.Right) },
             onStop = viewModel::stopHolding,
-            onAccessibleClick = {
-                viewModel.startHolding(RemoteCommand.Right)
-                viewModel.stopHolding()
-            },
+            onAccessibleClick = { viewModel.send(RemoteCommand.Right) },
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .width(arrowWidth)
@@ -620,10 +717,7 @@ private fun DPad(
             description = "Navigate down",
             onStart = { viewModel.startHolding(RemoteCommand.Down) },
             onStop = viewModel::stopHolding,
-            onAccessibleClick = {
-                viewModel.startHolding(RemoteCommand.Down)
-                viewModel.stopHolding()
-            },
+            onAccessibleClick = { viewModel.send(RemoteCommand.Down) },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 12.dp)
@@ -735,7 +829,6 @@ private fun UtilityBar(
     onCommand: (RemoteCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var muted by rememberSaveable { mutableStateOf(false) }
     var typeDialogOpen by remember { mutableStateOf(false) }
 
     Row(
@@ -747,21 +840,14 @@ private fun UtilityBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         UtilityAction(
-            description = if (muted) "Unmute" else "Mute",
-            onClick = {
-                muted = !muted
-                onCommand(RemoteCommand.Mute)
-            },
+            description = "Mute",
+            onClick = { onCommand(RemoteCommand.Mute) },
             modifier = Modifier.weight(1f),
         ) {
             Icon(
-                imageVector = if (muted) {
-                    Icons.AutoMirrored.Filled.VolumeUp
-                } else {
-                    Icons.AutoMirrored.Filled.VolumeOff
-                },
+                imageVector = Icons.AutoMirrored.Filled.VolumeOff,
                 contentDescription = null,
-                tint = if (muted) RemoteAccent else RemoteText,
+                tint = RemoteText,
                 modifier = Modifier.size(30.dp),
             )
         }

@@ -1,35 +1,22 @@
 package com.jurim007.androidtvremote.domain
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-
 class PressAndHoldController(
-    private val scope: CoroutineScope,
     private val remoteController: RemoteController,
-    private val initialRepeatDelayMs: Long = 420L,
-    private val repeatIntervalMs: Long = 145L,
 ) {
-    private var repeatJob: Job? = null
+    private var activeHoldId: Long? = null
+    private var nextHoldId = 0L
 
     fun start(command: RemoteCommand) {
         stop()
-        repeatJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            remoteController.send(command)
-            delay(initialRepeatDelayMs)
-            while (isActive) {
-                remoteController.send(command)
-                delay(repeatIntervalMs)
-            }
-        }
+        val holdId = ++nextHoldId
+        activeHoldId = holdId
+        remoteController.startHolding(command, holdId)
     }
 
     fun stop() {
-        repeatJob?.cancel()
-        repeatJob = null
+        val holdId = activeHoldId ?: return
+        activeHoldId = null
+        remoteController.stopHolding(holdId)
     }
 }
 

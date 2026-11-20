@@ -57,6 +57,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.jurim007.androidtvremote.domain.TvAppShortcut
+import com.jurim007.androidtvremote.domain.TvConnectionPhase
+import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.data.ShortcutImageDownloader
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -74,6 +76,7 @@ fun RemoteSettingsDialog(
     touchpadEnabled: Boolean,
     onTouchpadEnabledChange: (Boolean) -> Unit,
     onShortcutsChange: (List<TvAppShortcut>) -> Unit,
+    connectionState: TvConnectionState,
     onDismiss: () -> Unit,
 ) {
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
@@ -135,6 +138,18 @@ fun RemoteSettingsDialog(
                     },
                 )
             } else {
+                val connectionDescription = when (connectionState.phase) {
+                    TvConnectionPhase.CONNECTED ->
+                        "Connected to ${connectionState.device?.name ?: "TV"}"
+                    TvConnectionPhase.DISCOVERING -> "Searching for TVs"
+                    TvConnectionPhase.CONNECTING -> "Connecting to TV"
+                    TvConnectionPhase.PAIRING -> "Pairing with TV"
+                    TvConnectionPhase.ERROR -> connectionState.message ?: "Connection error"
+                    TvConnectionPhase.DISCONNECTED -> "No TV connected"
+                }
+                Text("TV connection", color = RemoteText)
+                Text(connectionDescription, color = RemoteMuted)
+                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -161,7 +176,7 @@ fun RemoteSettingsDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Add up to four apps by their TV package ID. Icons are selected from this device. Launch commands remain mocked until TV pairing is implemented.",
+                    text = "Add up to four TV apps by package ID. Set a TV launch URI if the app supports one, and choose an icon image by link or upload.",
                     color = RemoteMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -219,6 +234,9 @@ private fun AddTvAppForm(
         mutableStateOf(initialShortcut?.packageName.orEmpty())
     }
     var imageUrl by rememberSaveable(initialShortcut?.packageName) { mutableStateOf("") }
+    var launchUri by rememberSaveable(initialShortcut?.packageName) {
+        mutableStateOf(initialShortcut?.launchUri.orEmpty())
+    }
     var iconUri by rememberSaveable(initialShortcut?.packageName) {
         mutableStateOf(initialShortcut?.iconUri)
     }
@@ -267,6 +285,19 @@ private fun AddTvAppForm(
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Ascii,
+            imeAction = ImeAction.Next,
+        ),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = launchUri,
+        onValueChange = { launchUri = it; validationMessage = null },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("TV app launch URI (optional)") },
+        placeholder = { Text("app://your-tv-app") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
             imeAction = ImeAction.Next,
         ),
     )
@@ -367,6 +398,8 @@ private fun AddTvAppForm(
                         validationMessage = "That package ID is already in your shortcuts."
                     normalizedImageUrl != null && !imageUrlIsHttps ->
                         validationMessage = "Use a complete HTTPS link to an image."
+                    launchUri.isNotBlank() && launchUri.toUri().scheme.isNullOrBlank() ->
+                        validationMessage = "Enter a valid app launch URI, or leave it blank."
                     normalizedImageUrl != null -> scope.launch {
                         processingImage = true
                         validationMessage = null
@@ -378,6 +411,7 @@ private fun AddTvAppForm(
                                     name = name.trim(),
                                     packageName = normalizedPackage,
                                     iconUri = downloadedImage,
+                                    launchUri = launchUri.trim().takeIf(String::isNotEmpty),
                                 ),
                             )
                         } catch (_: IOException) {
@@ -392,6 +426,7 @@ private fun AddTvAppForm(
                             name = name.trim(),
                             packageName = normalizedPackage,
                             iconUri = imageUri,
+                            launchUri = launchUri.trim().takeIf(String::isNotEmpty),
                         ),
                     )
                 }
