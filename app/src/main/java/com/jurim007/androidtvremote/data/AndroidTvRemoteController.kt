@@ -43,7 +43,7 @@ import kotlinx.coroutines.withContext
 class AndroidTvRemoteController(context: Context) : RemoteController {
     private val appContext = context.applicationContext
     private val nsdManager = appContext.getSystemService(NsdManager::class.java)
-    private val identity = AndroidTvIdentity()
+    private val identity = AndroidTvIdentity(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val outgoing = Channel<OutgoingAction>(Channel.BUFFERED)
 
@@ -183,7 +183,16 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         var socket: SSLSocket? = null
         try {
             socket = openTlsSocket(device, TvDevice.PAIRING_PORT, expectedFingerprint = null)
+            val certificate = socket.session.peerCertificates.firstOrNull() as? X509Certificate
+                ?: throw CertificateException("The TV did not provide an X.509 certificate.")
+            val serverKey = certificate.publicKey as? RSAPublicKey
+                ?: throw CertificateException("The TV certificate does not contain an RSA key.")
+
             pendingPairingSocket = socket
+            pendingPairingDevice = device
+            pendingServerKey = serverKey
+            pendingCertificateFingerprint = fingerprint(certificate)
+
             if (pairingAttempt != pairingGeneration) {
                 closePendingPairing()
                 return@withContext
@@ -201,15 +210,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 closePendingPairing()
                 return@withContext
             }
-            val certificate = socket.session.peerCertificates.firstOrNull() as? X509Certificate
-                ?: throw CertificateException("The TV did not provide an X.509 certificate.")
-            val serverKey = certificate.publicKey as? RSAPublicKey
-                ?: throw CertificateException("The TV certificate does not contain an RSA key.")
 
-            pendingPairingSocket = socket
-            pendingPairingDevice = device
-            pendingServerKey = serverKey
-            pendingCertificateFingerprint = fingerprint(certificate)
             socket.soTimeout = PAIRING_PIN_TIMEOUT_MS
             mutableConnectionState.value = TvConnectionState(
                 phase = TvConnectionPhase.PAIRING,
@@ -247,7 +248,11 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 val pairedDevice = TvDevice(
                     name = deviceName.trim().ifBlank { originalDevice.name },
                     host = originalDevice.host,
-                    port = TvDevice.REMOTE_PORT,
+                    port = if (originalDevice.port > 0 && originalDevice.port != TvDevice.PAIRING_PORT) {
+                        originalDevice.port
+                    } else {
+                        TvDevice.REMOTE_PORT
+                    },
                     serverCertificateFingerprint = pendingCertificateFingerprint
                         ?: throw IllegalStateException("The TV certificate fingerprint was not captured."),
                 )
@@ -555,18 +560,21 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             SecureRandom(),
         )
         val plainSocket = Socket()
+        var tlsSocket: SSLSocket? = null
         try {
             plainSocket.connect(InetSocketAddress(device.host, port), CONNECT_TIMEOUT_MS)
-            val tlsSocket = sslContext.socketFactory.createSocket(
+            val socket = sslContext.socketFactory.createSocket(
                 plainSocket,
                 device.host,
                 port,
                 true,
             ) as SSLSocket
-            tlsSocket.soTimeout = SOCKET_TIMEOUT_MS
-            tlsSocket.startHandshake()
-            return tlsSocket
+            tlsSocket = socket
+            socket.soTimeout = SOCKET_TIMEOUT_MS
+            socket.startHandshake()
+            return socket
         } catch (error: Exception) {
+            tlsSocket?.close()
             plainSocket.close()
             throw error
         }
