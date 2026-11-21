@@ -8,6 +8,8 @@ import com.jurim007.androidtvremote.data.AndroidTvRemoteController
 import com.jurim007.androidtvremote.data.AppShortcutPreferences
 import com.jurim007.androidtvremote.domain.PressAndHoldController
 import com.jurim007.androidtvremote.domain.RemoteCommand
+import com.jurim007.androidtvremote.domain.RemoteOption
+import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvDevice
@@ -28,6 +30,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     val shortcuts = shortcutPreferences.shortcuts
     val touchpadEnabled = shortcutPreferences.touchpadEnabled
+    val remoteOptions = shortcutPreferences.remoteOptions.stateIn(
+        viewModelScope, SharingStarted.Eagerly, RemoteOption.defaults,
+    )
     val savedTvs = shortcutPreferences.savedTvs.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -76,6 +81,26 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 reportFailure("Could not save the remote setting", error)
             }
         }
+    }
+
+    fun setRemoteOption(option: RemoteOption, enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                shortcutPreferences.setRemoteOption(option, enabled)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportFailure("Could not save the remote setting", error)
+            }
+        }
+    }
+
+    fun canUsePhoneVolume(): Boolean {
+        val state = connectionState.value
+        val required = TvRemoteProtocol.FEATURE_KEY or TvRemoteProtocol.FEATURE_VOLUME
+        return RemoteOption.PHONE_VOLUME in remoteOptions.value &&
+            state.phase == TvConnectionPhase.CONNECTED &&
+            state.supportedFeatures and required == required
     }
 
     fun startHolding(command: RemoteCommand) {

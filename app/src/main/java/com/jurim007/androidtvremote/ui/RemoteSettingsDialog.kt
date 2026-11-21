@@ -25,12 +25,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -63,6 +66,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -73,11 +77,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
+import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.data.ShortcutImageDownloader
+import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
 import com.jurim007.androidtvremote.ui.theme.RemoteSurface
@@ -95,17 +101,33 @@ fun RemoteSettingsDialog(
     shortcuts: List<TvAppShortcut>,
     touchpadEnabled: Boolean,
     onTouchpadEnabledChange: (Boolean) -> Unit,
+    options: Set<RemoteOption>,
+    onOptionChange: (RemoteOption, Boolean) -> Unit,
+    onManageTvs: () -> Unit,
     onShortcutsChange: (List<TvAppShortcut>) -> Unit,
     connectionState: TvConnectionState,
     onDismiss: () -> Unit,
 ) {
+    var showShortcuts by rememberSaveable { mutableStateOf(false) }
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
     var editingPackageName by rememberSaveable { mutableStateOf<String?>(null) }
     val editingShortcut = shortcuts.firstOrNull { it.packageName == editingPackageName }
     val scrollState = rememberScrollState()
     var viewport by remember { mutableStateOf(Rect.Zero) }
+    val editing = addingShortcut || editingShortcut != null
+    val goBack = {
+        when {
+            editing -> {
+                addingShortcut = false
+                editingPackageName = null
+            }
+            showShortcuts -> showShortcuts = false
+            else -> onDismiss()
+        }
+    }
+    LaunchedEffect(showShortcuts, editing) { scrollState.scrollTo(0) }
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = goBack,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(
@@ -139,7 +161,8 @@ fun RemoteSettingsDialog(
                 text = when {
                     editingShortcut != null -> "Edit TV app"
                     addingShortcut -> "Add TV app"
-                    else -> "Settings"
+                    showShortcuts -> "TV app shortcuts"
+                    else -> "Remote settings"
                 },
                 color = RemoteText,
                 style = MaterialTheme.typography.titleLarge,
@@ -168,44 +191,7 @@ fun RemoteSettingsDialog(
                         editingPackageName = null
                     },
                 )
-            } else {
-                val connectionDescription = when (connectionState.phase) {
-                    TvConnectionPhase.CONNECTED ->
-                        "Connected to ${connectionState.device?.name ?: "TV"}"
-                    TvConnectionPhase.DISCOVERING -> "Searching for TVs"
-                    TvConnectionPhase.CONNECTING -> "Connecting to TV"
-                    TvConnectionPhase.PAIRING -> "Pairing with TV"
-                    TvConnectionPhase.ERROR -> connectionState.message ?: "Connection error"
-                    TvConnectionPhase.DISCONNECTED -> "No TV connected"
-                }
-                Text("TV connection", color = RemoteText)
-                Text(connectionDescription, color = RemoteMuted)
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Touchpad mode", color = RemoteText)
-                        Text(
-                            text = "Swipe the pad to navigate; tap to select.",
-                            color = RemoteMuted,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Switch(
-                        checked = touchpadEnabled,
-                        onCheckedChange = onTouchpadEnabledChange,
-                    )
-                }
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = "TV app shortcuts",
-                    color = RemoteText,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(Modifier.height(4.dp))
+            } else if (showShortcuts) {
                 Text(
                     text = "Add up to eight shortcuts by app name or package ID.",
                     color = RemoteMuted,
@@ -246,15 +232,107 @@ fun RemoteSettingsDialog(
                         Text("Restore default shortcuts")
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = goBack, modifier = Modifier.align(Alignment.End)) {
+                    Text("Back")
+                }
+            } else {
+                val connectionDescription = when (connectionState.phase) {
+                    TvConnectionPhase.CONNECTED ->
+                        "Connected to ${connectionState.device?.name ?: "TV"}"
+                    TvConnectionPhase.DISCOVERING -> "Searching for TVs"
+                    TvConnectionPhase.CONNECTING -> "Connecting to TV"
+                    TvConnectionPhase.PAIRING -> "Pairing with TV"
+                    TvConnectionPhase.ERROR -> connectionState.message ?: "Connection error"
+                    TvConnectionPhase.DISCONNECTED -> "No TV connected"
+                }
+                SettingsSection("Devices") {
+                    SettingsLink("Manage TVs", connectionDescription, onManageTvs)
+                }
+                SettingsSection("Remote layout") {
+                    SettingsToggle(
+                        title = "Touchpad mode",
+                        detail = "Swipe to navigate and tap to select.",
+                        enabled = touchpadEnabled,
+                        onChange = onTouchpadEnabledChange,
+                    )
+                    CONTROL_OPTIONS.forEach { (option, label) ->
+                        SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
+                    }
+                    SettingsLink("TV app shortcuts", "${shortcuts.size} of $MAX_TV_SHORTCUTS shortcuts", {
+                        showShortcuts = true
+                    })
+                }
+                SettingsSection("Button behavior") {
+                    SettingsToggle(
+                        title = "Phone volume buttons",
+                        detail = "Adjust TV volume with the phone’s volume keys when connected.",
+                        enabled = RemoteOption.PHONE_VOLUME in options,
+                    ) { onOptionChange(RemoteOption.PHONE_VOLUME, it) }
+                    SettingsToggle(
+                        title = "Vibrate on button press",
+                        enabled = RemoteOption.VIBRATION in options,
+                    ) { onOptionChange(RemoteOption.VIBRATION, it) }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
                     Text("Done")
                 }
             }
         }
+    }
+}
+
+private val CONTROL_OPTIONS = listOf(
+    RemoteOption.VOLUME to "Show volume buttons",
+    RemoteOption.CHANNEL to "Show channel buttons",
+    RemoteOption.MUTE to "Show Mute",
+    RemoteOption.SOURCE to "Show Source",
+    RemoteOption.SHORTCUTS to "Show app shortcuts",
+)
+
+@Composable
+private fun SettingsSection(title: String, content: @Composable () -> Unit) {
+    Text(title, color = RemoteAccent, style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(4.dp))
+    content()
+    HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
+    Spacer(Modifier.height(14.dp))
+}
+
+@Composable
+private fun SettingsToggle(
+    title: String,
+    enabled: Boolean,
+    detail: String? = null,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = enabled, role = Role.Switch, onValueChange = onChange)
+            .heightIn(min = 48.dp)
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = RemoteText)
+            if (detail != null) {
+                Text(detail, color = RemoteMuted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Switch(checked = enabled, onCheckedChange = null)
+    }
+}
+
+@Composable
+private fun SettingsLink(title: String, detail: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = RemoteText)
+            Text(detail, color = RemoteMuted, style = MaterialTheme.typography.bodySmall)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = RemoteMuted)
     }
 }
 

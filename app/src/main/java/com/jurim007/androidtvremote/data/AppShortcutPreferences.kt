@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
+import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
@@ -25,6 +26,16 @@ class AppShortcutPreferences(context: Context) {
 
     val touchpadEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[TOUCHPAD_ENABLED] ?: false
+    }
+
+    val remoteOptions: Flow<Set<RemoteOption>> = dataStore.data.map { preferences ->
+        RemoteOption.entries.filter { option ->
+            preferences[optionKeys.getValue(option)] ?: option.enabledByDefault
+        }.toSet()
+    }
+
+    suspend fun setRemoteOption(option: RemoteOption, enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[optionKeys.getValue(option)] = enabled }
     }
 
     val savedTvs: Flow<List<TvDevice>> = dataStore.data.map { preferences ->
@@ -83,6 +94,7 @@ class AppShortcutPreferences(context: Context) {
     }
 
     private companion object {
+        val optionKeys = RemoteOption.entries.associateWith { booleanPreferencesKey(it.preferenceKey) }
         val TV_APP_SHORTCUTS = stringPreferencesKey("tv_app_shortcuts")
         val TOUCHPAD_ENABLED = booleanPreferencesKey("touchpad_enabled")
         val SAVED_TVS = stringPreferencesKey("saved_tvs")

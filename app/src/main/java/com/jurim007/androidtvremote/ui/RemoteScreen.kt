@@ -1,5 +1,6 @@
 package com.jurim007.androidtvremote.ui
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -64,6 +65,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
@@ -81,6 +84,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -99,6 +103,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jurim007.androidtvremote.domain.RemoteCommand
+import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
@@ -122,6 +127,7 @@ fun RemoteScreen(
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var connectionDialogMode by rememberSaveable { mutableStateOf<String?>(null) }
     val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = defaultTvShortcuts)
+    val options by viewModel.remoteOptions.collectAsStateWithLifecycle()
     val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedTvs by viewModel.savedTvs.collectAsStateWithLifecycle()
     val selectedTvId by viewModel.selectedTvId.collectAsStateWithLifecycle()
@@ -191,49 +197,58 @@ fun RemoteScreen(
             if (layoutHeight < 620.dp) 64.dp else 76.dp,
         )
 
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            DeviceHeader(
-                selectedTv = selectedTv,
-                savedTvs = savedTvs,
-                connectionState = connectionState,
-                onSelectTv = viewModel::connect,
-                onAddTv = { connectionDialogMode = "add" },
-                onManageTvs = { connectionDialogMode = "manage" },
-                onCommand = viewModel::send,
-                onOpenSettings = { settingsOpen = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(headerHeight),
-            )
-            Spacer(Modifier.height(shortcutGap))
-            AppShortcutsGrid(
-                shortcuts = shortcuts,
-                onLaunchApp = { shortcut ->
-                    viewModel.send(
-                        RemoteCommand.LaunchApp(shortcut.packageName),
+        CompositionLocalProvider(LocalRemoteVibration provides (RemoteOption.VIBRATION in options)) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                DeviceHeader(
+                    selectedTv = selectedTv,
+                    savedTvs = savedTvs,
+                    connectionState = connectionState,
+                    onSelectTv = viewModel::connect,
+                    onAddTv = { connectionDialogMode = "add" },
+                    onCommand = viewModel::send,
+                    onOpenSettings = { settingsOpen = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(headerHeight),
+                )
+                if (RemoteOption.SHORTCUTS in options && shortcuts.isNotEmpty()) {
+                    Spacer(Modifier.height(shortcutGap))
+                    AppShortcutsGrid(
+                        shortcuts = shortcuts,
+                        onLaunchApp = { shortcut ->
+                            viewModel.send(
+                                RemoteCommand.LaunchApp(shortcut.packageName),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(shortcutGap))
-            RemoteControls(
-                viewModel = viewModel,
-                touchpadEnabled = touchpadEnabled,
-                sideWidth = sideWidth,
-                dpadHeight = dpadHeight,
-                bottomButtonSize = bottomButtonSize,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(utilityGap))
-            UtilityBar(
-                onCommand = viewModel::send,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(utilityHeight),
-            )
+                    Spacer(Modifier.height(shortcutGap))
+                } else {
+                    Spacer(Modifier.height(shortcutGap))
+                }
+                RemoteControls(
+                    viewModel = viewModel,
+                    touchpadEnabled = touchpadEnabled,
+                    showVolume = RemoteOption.VOLUME in options,
+                    showChannel = RemoteOption.CHANNEL in options,
+                    sideWidth = sideWidth,
+                    dpadHeight = dpadHeight,
+                    bottomButtonSize = bottomButtonSize,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(utilityGap))
+                UtilityBar(
+                    showMute = RemoteOption.MUTE in options,
+                    showSource = RemoteOption.SOURCE in options,
+                    onCommand = viewModel::send,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(utilityHeight),
+                )
+            }
         }
         SnackbarHost(
             hostState = snackbarHostState,
@@ -242,11 +257,14 @@ fun RemoteScreen(
                     .padding(bottom = 8.dp),
         )
     }
-    if (settingsOpen) {
+    if (settingsOpen && connectionDialogMode == null) {
         RemoteSettingsDialog(
             shortcuts = shortcuts,
             touchpadEnabled = touchpadEnabled,
             onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
+            options = options,
+            onOptionChange = viewModel::setRemoteOption,
+            onManageTvs = { connectionDialogMode = "manage" },
             onShortcutsChange = viewModel::saveShortcuts,
             connectionState = connectionState,
             onDismiss = { settingsOpen = false },
@@ -277,7 +295,6 @@ private fun DeviceHeader(
     connectionState: TvConnectionState,
     onSelectTv: (TvDevice) -> Unit,
     onAddTv: () -> Unit,
-    onManageTvs: () -> Unit,
     onCommand: (RemoteCommand) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -396,23 +413,16 @@ private fun DeviceHeader(
                         )
                     }
                 }
-                HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
                 DropdownMenuItem(
-                    text = { Text("Add TV") },
+                    text = { Icon(Icons.Filled.Add, contentDescription = "Add TV") },
                     onClick = {
                         menuExpanded = false
                         onAddTv()
                     },
                 )
+                HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
                 DropdownMenuItem(
-                    text = { Text("Manage TVs") },
-                    onClick = {
-                        menuExpanded = false
-                        onManageTvs()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Settings") },
+                    text = { Text("Remote settings") },
                     onClick = {
                         menuExpanded = false
                         onOpenSettings()
@@ -482,6 +492,8 @@ private fun AppShortcutsGrid(
 private fun RemoteControls(
     viewModel: RemoteViewModel,
     touchpadEnabled: Boolean,
+    showVolume: Boolean,
+    showChannel: Boolean,
     sideWidth: androidx.compose.ui.unit.Dp,
     dpadHeight: androidx.compose.ui.unit.Dp,
     bottomButtonSize: androidx.compose.ui.unit.Dp,
@@ -495,16 +507,20 @@ private fun RemoteControls(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SideControl(
-                width = sideWidth,
-                repeatCommands = listOf(RemoteCommand.VolumeUp, RemoteCommand.VolumeDown),
-                viewModel = viewModel,
-                centerIcon = Icons.AutoMirrored.Filled.VolumeUp,
-                topIcon = Icons.Filled.Add,
-                bottomIcon = Icons.Filled.Remove,
-                groupDescription = "Volume",
-                modifier = Modifier.fillMaxHeight(),
-            )
+            if (showVolume) {
+                SideControl(
+                    width = sideWidth,
+                    repeatCommands = listOf(RemoteCommand.VolumeUp, RemoteCommand.VolumeDown),
+                    viewModel = viewModel,
+                    centerIcon = Icons.AutoMirrored.Filled.VolumeUp,
+                    topIcon = Icons.Filled.Add,
+                    bottomIcon = Icons.Filled.Remove,
+                    groupDescription = "Volume",
+                    modifier = Modifier.fillMaxHeight(),
+                )
+            } else if (showChannel) {
+                Spacer(Modifier.width(sideWidth))
+            }
             if (touchpadEnabled) {
                 Touchpad(
                     viewModel = viewModel,
@@ -520,16 +536,20 @@ private fun RemoteControls(
                         .fillMaxHeight(),
                 )
             }
-            SideControl(
-                width = sideWidth,
-                repeatCommands = listOf(RemoteCommand.ChannelUp, RemoteCommand.ChannelDown),
-                viewModel = viewModel,
-                centerLabel = "CH",
-                topIcon = Icons.Filled.KeyboardArrowUp,
-                bottomIcon = Icons.Filled.KeyboardArrowDown,
-                groupDescription = "Channel",
-                modifier = Modifier.fillMaxHeight(),
-            )
+            if (showChannel) {
+                SideControl(
+                    width = sideWidth,
+                    repeatCommands = listOf(RemoteCommand.ChannelUp, RemoteCommand.ChannelDown),
+                    viewModel = viewModel,
+                    centerLabel = "CH",
+                    topIcon = Icons.Filled.KeyboardArrowUp,
+                    bottomIcon = Icons.Filled.KeyboardArrowDown,
+                    groupDescription = "Channel",
+                    modifier = Modifier.fillMaxHeight(),
+                )
+            } else if (showVolume) {
+                Spacer(Modifier.width(sideWidth))
+            }
         }
         Spacer(Modifier.height(14.dp))
         Row(
@@ -742,6 +762,8 @@ private fun Touchpad(
     viewModel: RemoteViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val feedback = remoteClickFeedback()
+    val currentFeedback by rememberUpdatedState(feedback)
     val thresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
     Box(
         modifier = modifier
@@ -770,6 +792,7 @@ private fun Touchpad(
                                     } else {
                                         if (delta.y > 0) RemoteCommand.Down else RemoteCommand.Up
                                     }
+                                    currentFeedback()
                                     viewModel.startHolding(command)
                                     holding = true
                                 }
@@ -777,6 +800,7 @@ private fun Touchpad(
 
                             if (!change.pressed) {
                                 if (!holding && change.position.isInside(size)) {
+                                    currentFeedback()
                                     viewModel.send(RemoteCommand.Select)
                                 }
                                 break
@@ -791,6 +815,7 @@ private fun Touchpad(
                 role = Role.Button
                 contentDescription = "Touchpad. Swipe and hold to repeat, tap to select."
                 onClick(label = "Select") {
+                    feedback()
                     viewModel.send(RemoteCommand.Select)
                     true
                 }
@@ -822,6 +847,8 @@ private fun Touchpad(
 
 @Composable
 private fun UtilityBar(
+    showMute: Boolean,
+    showSource: Boolean,
     onCommand: (RemoteCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -835,33 +862,37 @@ private fun UtilityBar(
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        UtilityAction(
-            description = "Mute",
-            onClick = { onCommand(RemoteCommand.Mute) },
-            modifier = Modifier.weight(1f),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.VolumeOff,
-                contentDescription = null,
-                tint = RemoteText,
-                modifier = Modifier.size(30.dp),
-            )
+        if (showMute) {
+            UtilityAction(
+                description = "Mute",
+                onClick = { onCommand(RemoteCommand.Mute) },
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.VolumeOff,
+                    contentDescription = null,
+                    tint = RemoteText,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+            UtilityDivider()
         }
-        UtilityDivider()
-        UtilityAction(
-            description = "Source",
-            onClick = { onCommand(RemoteCommand.Source) },
-            modifier = Modifier.weight(1.2f),
-            label = "Source",
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Input,
-                contentDescription = null,
-                tint = RemoteText,
-                modifier = Modifier.size(28.dp),
-            )
+        if (showSource) {
+            UtilityAction(
+                description = "Source",
+                onClick = { onCommand(RemoteCommand.Source) },
+                modifier = Modifier.weight(1.2f),
+                label = "Source",
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Input,
+                    contentDescription = null,
+                    tint = RemoteText,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+            UtilityDivider()
         }
-        UtilityDivider()
         UtilityAction(
             description = "Type text",
             onClick = { typeDialogOpen = true },
@@ -939,6 +970,7 @@ private fun TypeTextDialog(
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val feedback = remoteClickFeedback()
     var value by rememberSaveable { mutableStateOf("") }
     val dialogShape = RoundedCornerShape(28.dp)
     AlertDialog(
@@ -960,7 +992,10 @@ private fun TypeTextDialog(
                 singleLine = true,
                 label = { Text("Text") },
                 trailingIcon = {
-                    IconButton(onClick = onDelete) {
+                    IconButton(onClick = {
+                        feedback()
+                        onDelete()
+                    }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Backspace,
                             contentDescription = "Delete character on TV",
@@ -972,13 +1007,21 @@ private fun TypeTextDialog(
                     imeAction = ImeAction.Send,
                 ),
                 keyboardActions = KeyboardActions(
-                    onSend = { if (value.isNotBlank()) onSend(value) },
+                    onSend = {
+                        if (value.isNotBlank()) {
+                            feedback()
+                            onSend(value)
+                        }
+                    },
                 ),
             )
         },
         confirmButton = {
             TextButton(
-                onClick = { if (value.isNotBlank()) onSend(value) },
+                onClick = {
+                    feedback()
+                    onSend(value)
+                },
                 enabled = value.isNotBlank(),
             ) {
                 Text("Send")
@@ -1015,6 +1058,8 @@ private fun HoldTarget(
     content: @Composable (pressed: Boolean) -> Unit,
 ) {
     var pressed by remember { mutableStateOf(false) }
+    val feedback = remoteClickFeedback()
+    val currentFeedback by rememberUpdatedState(feedback)
     val currentOnStart by rememberUpdatedState(onStart)
     val currentOnStop by rememberUpdatedState(onStop)
     Box(
@@ -1026,6 +1071,7 @@ private fun HoldTarget(
                     try {
                         pressed = true
                         started = true
+                        currentFeedback()
                         currentOnStart()
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Main)
@@ -1043,6 +1089,7 @@ private fun HoldTarget(
                 role = Role.Button
                 contentDescription = description
                 onClick(label = description) {
+                    feedback()
                     onAccessibleClick()
                     true
                 }
@@ -1093,6 +1140,7 @@ private fun RemoteTapTarget(
     border: Color,
     content: @Composable () -> Unit,
 ) {
+    val feedback = remoteClickFeedback()
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val glowAlpha by animateFloatAsState(
@@ -1111,12 +1159,26 @@ private fun RemoteTapTarget(
                 indication = null,
                 role = Role.Button,
                 onClickLabel = description,
-                onClick = onClick,
+                onClick = {
+                    feedback()
+                    onClick()
+                },
             )
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         content()
+    }
+}
+
+private val LocalRemoteVibration = staticCompositionLocalOf { true }
+
+@Composable
+private fun remoteClickFeedback(): () -> Unit {
+    val enabled = LocalRemoteVibration.current
+    val view = LocalView.current
+    return {
+        if (enabled) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 }
 

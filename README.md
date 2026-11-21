@@ -17,16 +17,22 @@ The app stores paired TV addresses and certificate fingerprints with DataStore. 
 are sent only while a paired TV session is connected; unsupported actions are reported
 instead of being simulated.
 
-The device selector lets you pair, select, and manage TVs. Up to eight TV app shortcuts fit in two rows. In Settings, type an app name to choose
+Use the device selector to switch TVs or tap **+** to pair. Manage paired TVs under **Remote settings → Devices**. Up to eight TV app shortcuts fit in two rows. In Settings, type an app name to choose
 a suggestion or enter a package ID. You can also supply an SVG file or HTTPS SVG URL.
 YouTube, Netflix, Prime Video, and Disney+ are included by default. Existing shortcut lists
 are kept and can be replaced using **Restore default shortcuts** in Settings.
 
 Known apps use built-in launch links. Other apps use Android TV's package-launch link.
-If the TV rejects package launches, install and open a compatible handler such as
+Many package-ID shortcuts need a compatible handler on the TV, including 4K Player on some TCL models.
+If a shortcut fails to open, install and open
 [AVA Connect](https://play.google.com/store/apps/details?id=com.ava.connect) on the TV.
 Complete its on-TV setup before retrying the shortcut. See
 [AVA's setup instructions](https://support.ava.com/hc/en-us/articles/38717944348061-Fix-for-Google-TV-Android-TV-App-Launching-Broken-by-Google-s-Play-Store-Update-in-August-2026).
+
+In **Remote settings**, choose D-pad or touchpad mode and show or hide volume, channel,
+Mute, Source, and app shortcuts. All optional controls are visible by default. Button
+vibration is on by default. Phone volume keys control the TV only when enabled and
+connected to a TV that supports volume control.
 
 Shortcut icons are matched automatically by package ID. Most bundled SVGs come from
 [Simple Icons](https://simpleicons.org/), including the
