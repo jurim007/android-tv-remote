@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="145 305 615 300" fill="none">
+  <defs>
+    <path id="cloud-shape" d="M216 470 C211 408 253 352 319 352 C332 352 346 354 357 358 C384 328 420 311 459 311 C518 311 567 348 587 401 C628 404 660 432 670 472 C678 470 684 469 690 469 C725 469 752 498 752 534 C752 570 723 597 687 597 H218 C181 597 152 570 152 534 C152 499 180 470 216 470 Z"/>
+    <clipPath id="cloud-clip"><use href="#cloud-shape"/></clipPath>
+  </defs>
+  <use href="#cloud-shape" fill="currentColor"/>
+  <g clip-path="url(#cloud-clip)">
+    <!-- Middle region; no overlap with the light region -->
+    <path d="M476 305 H605 C609 424 586 531 538 605 H211 C374 605 481 471 476 305 Z" fill="#fff" fill-opacity=".20"/>
+    <!-- Light region -->
+    <path d="M145 305 H476 C481 471 374 605 211 605 H145 Z" fill="#fff" fill-opacity=".38"/>
+  </g>
+</svg>

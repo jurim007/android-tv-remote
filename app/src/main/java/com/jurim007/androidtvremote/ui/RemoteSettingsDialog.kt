@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -235,10 +236,12 @@ private fun AddTvAppForm(
     var name by rememberSaveable(initialShortcut?.packageName) {
         mutableStateOf(initialShortcut?.name.orEmpty())
     }
-    var packageName by rememberSaveable(initialShortcut?.packageName) {
-        mutableStateOf(initialShortcut?.packageName.orEmpty())
+    var packageField by rememberSaveable(initialShortcut?.packageName, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(initialShortcut?.packageName.orEmpty()))
     }
-    var imageUrl by rememberSaveable(initialShortcut?.packageName) { mutableStateOf("") }
+    var iconLinkField by rememberSaveable(initialShortcut?.packageName, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue())
+    }
     var iconUri by rememberSaveable(initialShortcut?.packageName) {
         mutableStateOf(initialShortcut?.iconUri)
     }
@@ -254,7 +257,7 @@ private fun AddTvAppForm(
                 processingImage = true
                 try {
                     iconUri = ShortcutImageDownloader.copyFromUri(context, uri)
-                    imageUrl = ""
+                    iconLinkField = TextFieldValue()
                     iconLoadError = false
                 } catch (_: IOException) {
                     iconLoadError = true
@@ -266,8 +269,7 @@ private fun AddTvAppForm(
             }
         }
     }
-    val iconBitmap by rememberShortcutIconBitmap(iconUri, packageName.trim())
-    val selectedIconBitmap = iconBitmap
+    val selectedIconBitmap = rememberShortcutIconBitmap(iconUri, packageField.text.trim()).value
 
     OutlinedTextField(
         value = name,
@@ -279,24 +281,30 @@ private fun AddTvAppForm(
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
-        value = packageName,
-        onValueChange = { packageName = it; validationMessage = null },
+        value = packageField,
+        onValueChange = { entered ->
+            if (entered.text != packageField.text) validationMessage = null
+            packageField = entered
+        },
         modifier = Modifier.fillMaxWidth(),
         label = { Text("TV package ID") },
         placeholder = { Text("com.example.tvapp") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Ascii,
+            keyboardType = KeyboardType.Uri,
+            autoCorrectEnabled = false,
             imeAction = ImeAction.Next,
         ),
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
-        value = imageUrl,
-        onValueChange = {
-            imageUrl = it
-            if (it.isNotBlank()) iconUri = null
-            validationMessage = null
+        value = iconLinkField,
+        onValueChange = { entered ->
+            if (entered.text != iconLinkField.text) {
+                if (entered.text.isNotBlank()) iconUri = null
+                validationMessage = null
+            }
+            iconLinkField = entered
         },
         modifier = Modifier.fillMaxWidth(),
         label = { Text("HTTPS SVG icon link (optional)") },
@@ -304,6 +312,7 @@ private fun AddTvAppForm(
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri,
+            autoCorrectEnabled = false,
             imeAction = ImeAction.Done,
         ),
     )
@@ -368,8 +377,8 @@ private fun AddTvAppForm(
         }
         Button(
             onClick = {
-                val normalizedPackage = packageName.trim()
-                val normalizedImageUrl = imageUrl.trim().takeIf(String::isNotEmpty)
+                val normalizedPackage = packageField.text.trim()
+                val normalizedImageUrl = iconLinkField.text.trim().takeIf(String::isNotEmpty)
                 val imageUri = iconUri
                 val imageUrlIsHttps = normalizedImageUrl?.let { value ->
                     val uri = value.toUri()
@@ -422,7 +431,7 @@ private fun AddTvAppForm(
             Text(
                 when {
                     !processingImage -> if (initialShortcut == null) "Add app" else "Save changes"
-                    imageUrl.isNotBlank() -> "Downloading…"
+                    iconLinkField.text.isNotBlank() -> "Downloading…"
                     else -> "Loading image…"
                 },
             )
@@ -492,16 +501,10 @@ private val PACKAGE_ID = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+
 @Composable
 private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String): State<ImageBitmap?> {
     val context = LocalContext.current
-    return produceState<ImageBitmap?>(initialValue = null, iconUri, packageName, context) {
+    val asset = shortcutIconAssets[packageName]
+    return produceState<ImageBitmap?>(initialValue = null, iconUri, asset, context) {
         value = withContext(Dispatchers.IO) {
             val customIcon = iconUri?.let { uri -> loadIconBitmap { openIconStream(context, uri.toUri()) } }
-            val asset = when (packageName) {
-                "com.google.android.youtube.tv" -> "youtube.svg"
-                "com.netflix.ninja" -> "netflix.svg"
-                "com.amazon.amazonvideo.livingroom" -> "primevideo.svg"
-                "com.disney.disneyplus" -> "disneyplus.svg"
-                else -> null
-            }
             customIcon ?: asset?.let { loadIconBitmap { context.assets.open("shortcut-icons/$it") } }
         }
     }
