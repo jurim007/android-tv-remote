@@ -6,6 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import android.util.Log
 import com.jurim007.androidtvremote.data.protocol.ProtoWire
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
+import com.jurim007.androidtvremote.data.protocol.TvImeField
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteController
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
@@ -95,9 +96,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private var pairingGeneration = 0L
     private var connectionGeneration = 0L
     @Volatile
-    private var imeCounter = 0
-    @Volatile
-    private var fieldCounter = 0
+    private var imeField: TvImeField? = null
 
     init {
         scope.launch {
@@ -337,15 +336,19 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 connectingSocket = socket
             }
 
-            val configure = readRemoteUntil(socket, 1)
+            var initialImeField: TvImeField? = null
+            val trackIme: (ByteArray) -> Unit = {
+                initialImeField = TvRemoteProtocol.updateImeField(it, initialImeField)
+            }
+            val configure = readRemoteUntil(socket, 1, trackIme)
             val advertisedFeatures = TvRemoteProtocol.remoteFeatures(configure)
                 ?: throw IOException("The TV did not advertise remote-control capabilities.")
             val negotiatedFeatures = advertisedFeatures and SUPPORTED_FEATURES
             writeMessage(socket, TvRemoteProtocol.remoteConfigure(negotiatedFeatures))
 
-            readRemoteUntil(socket, 2)
+            readRemoteUntil(socket, 2, trackIme)
             writeMessage(socket, TvRemoteProtocol.remoteSetActive(negotiatedFeatures))
-            readRemoteUntil(socket, 40)
+            readRemoteUntil(socket, 40, trackIme)
 
             // The handshake timeout would also expire during normal gaps in TV traffic.
             socket.soTimeout = 0
@@ -356,8 +359,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 connectingSocket = null
                 remoteSocket = socket
                 activeFeatures = negotiatedFeatures
-                imeCounter = 0
-                fieldCounter = 0
+                imeField = initialImeField
                 connected = true
                 reconnectJob = null
                 Log.i(TAG, "Connected to ${device.name}")
@@ -405,11 +407,16 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         connectingSocket = null
         remoteSocket = null
         activeFeatures = 0
+        imeField = null
         mutableConnectionState.value = TvConnectionState()
         return sockets
     }
 
-    internal suspend fun sendMicrophoneAudio(stop: Deferred<Unit>, onListening: () -> Unit) =
+    internal suspend fun sendMicrophoneAudio(
+        stop: Deferred<Unit>,
+        onListening: () -> Unit,
+        onFinishing: () -> Unit,
+    ) =
         withContext(Dispatchers.IO) {
             val (voice, device) = synchronized(connectionLock) {
                 val socket = remoteSocket ?: throw IOException("Connect to a TV to use the microphone.")
@@ -435,17 +442,40 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 if (!ready) return@withContext
                 sessionId = voice.sessionId.await()
                 writeVoiceMessage(voice.socket, TvRemoteProtocol.beginVoice(sessionId))
+                Log.d(TAG, "TV voice session opened")
+                var sentPackets = 0
                 if (!stop.isCompleted && !voice.finished.isCompleted) {
                     recordVoice(
-                        shouldStop = { stop.isCompleted || voice.finished.isCompleted },
+                        shouldStop = {
+                            stop.isCompleted || voice.finished.isCompleted || voice.speechEnded.isCompleted
+                        },
                         onListening = onListening,
                         sendAudio = { samples ->
-                            if (!voice.finished.isCompleted) {
+                            if (!voice.finished.isCompleted && !voice.speechEnded.isCompleted) {
+                                voice.hasSentAudio = true
                                 writeVoiceMessage(voice.socket, TvRemoteProtocol.voiceAudio(sessionId, samples))
+                                sentPackets++
                             }
                         },
                     )
                 }
+                if (sentPackets > 0 && !voice.finished.isCompleted) {
+                    onFinishing()
+                    if (!voice.speechEnded.isCompleted) {
+                        val silence = ByteArray(VOICE_PACKET_BYTES)
+                        writeVoiceMessage(voice.socket, TvRemoteProtocol.voiceAudio(sessionId, silence))
+                        withTimeoutOrNull(VOICE_ENDPOINT_TIMEOUT_MS) {
+                            select<Unit> {
+                                voice.finished.onAwait { }
+                                voice.speechEnded.onAwait { }
+                            }
+                        }
+                    }
+                    if (voice.speechEnded.isCompleted && !voice.finished.isCompleted) {
+                        withTimeoutOrNull(VOICE_RESULT_GRACE_MS) { voice.finished.await() }
+                    }
+                }
+                Log.d(TAG, "TV voice packets sent: $sentPackets, endpoint signaled: ${voice.speechEnded.isCompleted}")
             } catch (error: VoiceWriteException) {
                 handleConnectionLoss(voice.socket, device, error)
                 throw error
@@ -479,13 +509,17 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
     private fun handleVoiceMessage(socket: SSLSocket, message: ByteArray): Boolean {
         val begin = TvRemoteProtocol.voiceSessionId(message, 30)
+        val speechEnded = TvRemoteProtocol.voiceSessionId(message, 31)
         val end = TvRemoteProtocol.voiceSessionId(message, 32)
-        if (begin == null && end == null) return false
+        if (begin == null && speechEnded == null && end == null) return false
         synchronized(connectionLock) {
             voiceRequest?.takeIf { it.socket === socket }?.let { voice ->
                 if (begin != null && voice.receivedSessionId == null) {
                     voice.receivedSessionId = begin
                     voice.sessionId.complete(begin)
+                }
+                if (speechEnded != null && voice.hasSentAudio && voice.receivedSessionId == speechEnded) {
+                    voice.speechEnded.complete(Unit)
                 }
                 if (end != null && voice.receivedSessionId == end) voice.finished.complete(Unit)
             }
@@ -587,7 +621,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 } else {
                     writeMessage(
                         socket,
-                        TvRemoteProtocol.textEdit(command.text, imeCounter, fieldCounter),
+                        TvRemoteProtocol.textEdit(command.text, imeField),
                     )
                 }
             }
@@ -653,11 +687,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     Log.w(TAG, feedback)
                     emitMessage(feedback)
                 } else {
-                    val (newImeCounter, newFieldCounter) = TvRemoteProtocol.imeCounters(message)
                     synchronized(connectionLock) {
                         if (socket !== remoteSocket) return
-                        if (newImeCounter != null) imeCounter = newImeCounter
-                        if (newFieldCounter != null) fieldCounter = newFieldCounter
+                        imeField = TvRemoteProtocol.updateImeField(message, imeField)
                     }
                 }
             }
@@ -671,6 +703,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             if (socket !== remoteSocket) return
             remoteSocket = null
             activeFeatures = 0
+            imeField = null
             clearVoiceLocked()
             clearHoldLocked()
             readerJob?.cancel()
@@ -763,7 +796,11 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         throw IOException("The TV pairing handshake did not complete.")
     }
 
-    private fun readRemoteUntil(socket: SSLSocket, fieldNumber: Int): ByteArray {
+    private fun readRemoteUntil(
+        socket: SSLSocket,
+        fieldNumber: Int,
+        onMessage: (ByteArray) -> Unit,
+    ): ByteArray {
         repeat(MAX_HANDSHAKE_MESSAGES) {
             val message = readDelimited(socket)
                 ?: throw EOFException("The TV closed the remote connection.")
@@ -771,6 +808,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 throw IOException("The TV rejected the remote handshake.")
             }
             TvRemoteProtocol.pingResponse(message)?.let { writeMessage(socket, it) }
+            onMessage(message)
             if (TvRemoteProtocol.remoteField(message, fieldNumber) != null) return message
         }
         throw IOException("The TV remote handshake did not complete.")
@@ -881,7 +919,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private class VoiceRequest(val socket: SSLSocket) {
         val sessionId = CompletableDeferred<Int>()
         val finished = CompletableDeferred<Unit>()
+        val speechEnded = CompletableDeferred<Unit>()
         var receivedSessionId: Int? = null
+        @Volatile
+        var hasSentAudio = false
     }
 
     private class VoiceWriteException(cause: IOException) : IOException("The TV voice connection was interrupted.", cause)
@@ -899,6 +940,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         const val RECONNECT_DELAY_MS = 2_000L
         const val MAX_RECONNECT_ATTEMPTS = 5
         const val VOICE_RESPONSE_TIMEOUT_MS = 2_500L
+        const val VOICE_ENDPOINT_TIMEOUT_MS = 3_000L
+        const val VOICE_RESULT_GRACE_MS = 2_000L
         const val SUPPORTED_FEATURES =
             TvRemoteProtocol.FEATURE_PING or
                 TvRemoteProtocol.FEATURE_KEY or

@@ -132,9 +132,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         voiceJob = viewModelScope.launch {
             try {
                 pressAndHoldController.stop()
-                remoteController.sendMicrophoneAudio(stop) {
-                    mutableVoiceState.value = VoiceState.LISTENING
-                }
+                remoteController.sendMicrophoneAudio(
+                    stop,
+                    onListening = { mutableVoiceState.value = VoiceState.LISTENING },
+                    onFinishing = { mutableVoiceState.value = VoiceState.FINISHING },
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -258,4 +260,4 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 }
 
 
-internal enum class VoiceState { IDLE, STARTING, LISTENING }
+internal enum class VoiceState { IDLE, STARTING, LISTENING, FINISHING }

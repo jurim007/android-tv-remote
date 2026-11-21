@@ -159,54 +159,47 @@ internal object TvRemoteProtocol {
         return ProtoWriter().bytes(90, request).build()
     }
 
-    fun textEdit(text: String, imeCounter: Int, fieldCounter: Int): ByteArray {
-        val imeObject = ProtoWriter()
-            .int(1, text.length.toLong())
-            .int(2, text.length.toLong())
+    fun textEdit(text: String, field: TvImeField?): ByteArray {
+        val batch = ProtoWriter()
+        val start = field?.selectionStart ?: 0
+        val end = field?.selectionEnd ?: 0
+        if (field != null) {
+            val select = ProtoWriter().int(2, start.toLong()).int(3, end.toLong()).build()
+            batch.int(1, field.id.toLong())
+                .int(2, field.counter.toLong())
+                .bytes(3, ProtoWriter().bytes(1, select).build())
+        }
+        val replacement = ProtoWriter()
+            .int(1, start.toLong())
+            .int(2, end.toLong())
             .string(3, text)
             .build()
-        val editInfo = ProtoWriter()
-            .int(1, 1)
-            .bytes(2, imeObject)
-            .build()
-        val batchEdit = ProtoWriter()
-            .int(1, imeCounter.toLong())
-            .int(2, fieldCounter.toLong())
-            .bytes(3, editInfo)
-            .build()
-        return ProtoWriter().bytes(21, batchEdit).build()
+        batch.bytes(3, ProtoWriter().bytes(2, replacement).build())
+        return ProtoWriter().bytes(21, batch.build()).build()
     }
 
-    fun imeCounters(message: ByteArray): Pair<Int?, Int?> {
+    fun updateImeField(message: ByteArray, current: TvImeField?): TvImeField? {
         val fields = ProtoWire.parse(message)
-        val keyInject = fields.firstOrNull { it.number == 20 }?.bytes
-        if (keyInject != null) {
-            val injectFields = ProtoWire.parse(keyInject)
-            val appInfo = injectFields.firstOrNull { it.number == 1 }?.bytes
-            val status = injectFields.firstOrNull { it.number == 2 }?.bytes
-            return appInfo?.let { ProtoWire.parse(it).firstOrNull { field -> field.number == 1 }?.varint?.toInt() } to
-                status?.let { ProtoWire.parse(it).firstOrNull { field -> field.number == 1 }?.varint?.toInt() }
+        val opened = fields.firstOrNull { it.number == 20 }?.bytes
+        if (opened != null) {
+            val editor = remoteField(opened, 1) ?: return null
+            val id = ProtoWire.parse(editor).intField(1)
+            if (id == 0) return null
+            val initial = TvImeField(id)
+            return remoteField(opened, 2)?.let(initial::withTextStatus) ?: initial
         }
+        if (current == null || fields.any { it.number == 24 && it.bytes != null }) return null
 
-        val showRequest = fields.firstOrNull { it.number == 22 }?.bytes
-        val textFieldStatus = showRequest?.let {
-            ProtoWire.parse(it).firstOrNull { field -> field.number == 2 }?.bytes
-        }
-        if (textFieldStatus != null) {
-            val counter = ProtoWire.parse(textFieldStatus)
-                .firstOrNull { it.number == 1 }
-                ?.varint
-                ?.toInt()
-            return null to counter
-        }
+        val textUpdate = fields.firstOrNull { it.number == 22 }?.bytes
+        val status = textUpdate?.let { remoteField(it, 2) }
+        if (status != null) return current.withTextStatus(status)
 
-        val batchEdit = fields.firstOrNull { it.number == 21 }?.bytes
-        if (batchEdit != null) {
-            val batchFields = ProtoWire.parse(batchEdit)
-            return batchFields.firstOrNull { it.number == 1 }?.varint?.toInt() to
-                batchFields.firstOrNull { it.number == 2 }?.varint?.toInt()
+        val selection = fields.firstOrNull { it.number == 23 }?.bytes
+        if (selection != null) {
+            val range = ProtoWire.parse(selection)
+            return current.withSelection(range.intField(2), range.intField(3))
         }
-        return null to null
+        return current
     }
 
     fun pairingSecret(
@@ -245,3 +238,24 @@ internal object TvRemoteProtocol {
 
     private val PIN_PATTERN = Regex("[0-9A-Fa-f]{6}")
 }
+
+
+internal data class TvImeField(
+    val id: Int,
+    val counter: Int = 0,
+    val selectionStart: Int = 0,
+    val selectionEnd: Int = 0,
+) {
+    fun withTextStatus(status: ByteArray): TvImeField {
+        val fields = ProtoWire.parse(status)
+        return withSelection(fields.intField(3), fields.intField(4)).copy(counter = fields.intField(1))
+    }
+
+    fun withSelection(start: Int, end: Int): TvImeField = copy(
+        selectionStart = minOf(start, end).coerceAtLeast(0),
+        selectionEnd = maxOf(start, end).coerceAtLeast(0),
+    )
+}
+
+private fun List<ProtoField>.intField(number: Int): Int =
+    firstOrNull { it.number == number }?.varint?.toInt() ?: 0

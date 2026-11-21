@@ -622,6 +622,7 @@ private fun RemoteControls(
                         VoiceState.IDLE -> "Start voice search"
                         VoiceState.STARTING -> "Cancel voice search"
                         VoiceState.LISTENING -> "Stop listening"
+                        VoiceState.FINISHING -> "Finishing voice search"
                     },
                     onClick = onMicrophoneClick,
                     modifier = Modifier.size(bottomButtonSize),
@@ -655,7 +656,11 @@ private fun RemoteControls(
         }
         if (voiceState != VoiceState.IDLE) {
             Text(
-                text = if (voiceState == VoiceState.LISTENING) "Listening…" else "Starting voice search…",
+                text = when (voiceState) {
+                    VoiceState.LISTENING -> "Listening…"
+                    VoiceState.FINISHING -> "Finishing voice search…"
+                    else -> "Starting voice search…"
+                },
                 modifier = Modifier.padding(top = 6.dp).align(Alignment.CenterHorizontally),
                 color = RemoteAccent,
                 style = MaterialTheme.typography.bodySmall,

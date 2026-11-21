@@ -14,6 +14,37 @@ import org.junit.Test
 
 class TvRemoteProtocolTest {
     @Test
+    fun insertsAtTheSelectionWithTheFocusedTvFieldAndTextCounter() {
+        val editor = ProtoWriter().int(1, 42).int(2, 1).build()
+        val initialStatus = ProtoWriter().int(1, 6).int(3, 2).int(4, 2).build()
+        val opened = ProtoWriter().bytes(20, ProtoWriter().bytes(1, editor)
+            .bytes(2, initialStatus).build()).build()
+        val field = TvRemoteProtocol.updateImeField(opened, null)
+        assertEquals(TvImeField(42, 6, 2, 2), field)
+
+        val newStatus = ProtoWriter().int(1, 7).int(3, 4).int(4, 1).build()
+        val update = ProtoWriter().bytes(22, ProtoWriter().bytes(2, newStatus).build()).build()
+        val updated = TvRemoteProtocol.updateImeField(update, field)
+        assertEquals(TvImeField(42, 7, 1, 4), updated)
+        assertArrayEquals(
+            byteArrayOf(
+                0xaa.toByte(), 1, 23, 0x08, 42, 0x10, 7,
+                0x1a, 6, 0x0a, 4, 0x10, 1, 0x18, 4,
+                0x1a, 9, 0x12, 7, 0x08, 1, 0x10, 4, 0x1a, 1, 'x'.code.toByte(),
+            ),
+            TvRemoteProtocol.textEdit("x", updated),
+        )
+    }
+
+    @Test
+    fun typingWithoutAFocusedFieldDoesNotDeleteExistingText() {
+        assertArrayEquals(
+            byteArrayOf(0xaa.toByte(), 1, 7, 0x1a, 5, 0x12, 3, 0x1a, 1, 'A'.code.toByte()),
+            TvRemoteProtocol.textEdit("A", null),
+        )
+    }
+
+    @Test
     fun voiceMessagesCarryTheSessionIdAndPcmPayload() {
         assertArrayEquals(
             byteArrayOf(0x52, 0x04, 0x08, 84, 0x10, 0x03),
