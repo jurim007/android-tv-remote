@@ -506,7 +506,10 @@ private fun AppShortcutsGrid(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         shortcuts.chunked(columns).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 row.forEach { shortcut ->
                     RemoteTapTarget(
                         description = shortcut.name,
@@ -528,7 +531,6 @@ private fun AppShortcutsGrid(
                         )
                     }
                 }
-                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
