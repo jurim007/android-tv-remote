@@ -34,6 +34,11 @@ Mute, Source, and app shortcuts. All optional controls are visible by default. B
 vibration is on by default. Phone volume keys control the TV only when enabled and
 connected to a TV that supports volume control.
 
+On TVs that advertise voice support, the microphone appears between Back and Home.
+Tap it, allow microphone access on the phone, and speak. TVControl streams the audio
+over the paired connection for the TV to handle. Tap Stop to finish. Voice recording
+also stops when you leave the remote or after 20 seconds.
+
 Shortcut icons are matched automatically by package ID. Most bundled SVGs come from
 [Simple Icons](https://simpleicons.org/), including the
 [Prime Video logo from v11](https://cdn.jsdelivr.net/npm/simple-icons@11.0.0/icons/primevideo.svg).

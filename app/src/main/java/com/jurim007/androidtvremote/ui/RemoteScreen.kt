@@ -1,6 +1,10 @@
 package com.jurim007.androidtvremote.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -45,6 +49,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -84,6 +90,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -102,6 +109,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
+import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
@@ -141,10 +150,26 @@ fun RemoteScreen(
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    val voiceState by viewModel.voiceState.collectAsStateWithLifecycle()
+    val showMicrophone = RemoteOption.MICROPHONE in options
+    val canUseMicrophone = connectionState.phase == TvConnectionPhase.CONNECTED &&
+        connectionState.supportedFeatures and TvRemoteProtocol.VOICE_FEATURES == TvRemoteProtocol.VOICE_FEATURES
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            viewModel.microphonePermissionDenied()
+        } else if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            viewModel.startVoice()
+        }
+    }
+    LaunchedEffect(showMicrophone, settingsOpen, connectionDialogMode) {
+        if (!showMicrophone || settingsOpen || connectionDialogMode != null) viewModel.cancelVoice()
+    }
     DisposableEffect(lifecycleOwner, viewModel, connectionDialogMode) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
+                    viewModel.cancelVoice()
                     viewModel.stopHolding()
                     viewModel.stopDiscovery()
                     viewModel.cancelPairing()
@@ -234,6 +259,19 @@ fun RemoteScreen(
                     touchpadEnabled = touchpadEnabled,
                     showVolume = RemoteOption.VOLUME in options,
                     showChannel = RemoteOption.CHANNEL in options,
+                    voiceState = voiceState,
+                    onMicrophoneClick = if (showMicrophone && canUseMicrophone) {
+                        {
+                            when {
+                                voiceState != VoiceState.IDLE -> viewModel.stopVoice()
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                    PackageManager.PERMISSION_GRANTED -> viewModel.startVoice()
+                                else -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        }
+                    } else {
+                        null
+                    },
                     sideWidth = sideWidth,
                     dpadHeight = dpadHeight,
                     bottomButtonSize = bottomButtonSize,
@@ -501,6 +539,8 @@ private fun RemoteControls(
     touchpadEnabled: Boolean,
     showVolume: Boolean,
     showChannel: Boolean,
+    voiceState: VoiceState,
+    onMicrophoneClick: (() -> Unit)?,
     sideWidth: androidx.compose.ui.unit.Dp,
     dpadHeight: androidx.compose.ui.unit.Dp,
     bottomButtonSize: androidx.compose.ui.unit.Dp,
@@ -575,6 +615,28 @@ private fun RemoteControls(
                     modifier = Modifier.size(34.dp),
                 )
             }
+            if (onMicrophoneClick != null) {
+                val active = voiceState != VoiceState.IDLE
+                RemoteTapTarget(
+                    description = when (voiceState) {
+                        VoiceState.IDLE -> "Start voice search"
+                        VoiceState.STARTING -> "Cancel voice search"
+                        VoiceState.LISTENING -> "Stop listening"
+                    },
+                    onClick = onMicrophoneClick,
+                    modifier = Modifier.size(bottomButtonSize),
+                    shape = CircleShape,
+                    background = surfaceBrush(),
+                    border = if (active) RemoteAccent else RemoteBorder.copy(alpha = 0.7f),
+                ) {
+                    Icon(
+                        imageVector = if (active) Icons.Filled.Stop else Icons.Filled.Mic,
+                        contentDescription = null,
+                        tint = if (active) RemoteAccent else RemoteText,
+                        modifier = Modifier.size(34.dp),
+                    )
+                }
+            }
             RemoteTapTarget(
                 description = "Home",
                 onClick = { viewModel.send(RemoteCommand.Home) },
@@ -590,6 +652,14 @@ private fun RemoteControls(
                     modifier = Modifier.size(34.dp),
                 )
             }
+        }
+        if (voiceState != VoiceState.IDLE) {
+            Text(
+                text = if (voiceState == VoiceState.LISTENING) "Listening…" else "Starting voice search…",
+                modifier = Modifier.padding(top = 6.dp).align(Alignment.CenterHorizontally),
+                color = RemoteAccent,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

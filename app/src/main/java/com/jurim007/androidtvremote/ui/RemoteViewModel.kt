@@ -14,8 +14,12 @@ import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvDevice
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
@@ -27,6 +31,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         PressAndHoldController(remoteController)
     private val shortcutPreferences = AppShortcutPreferences(application)
     private val operationMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    private var voiceJob: Job? = null
+    private var stopRecording: CompletableDeferred<Unit>? = null
+    private val mutableVoiceState = MutableStateFlow(VoiceState.IDLE)
+    internal val voiceState = mutableVoiceState.asStateFlow()
 
     val shortcuts = shortcutPreferences.shortcuts
     val touchpadEnabled = shortcutPreferences.touchpadEnabled
@@ -113,6 +122,40 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         return RemoteOption.PHONE_VOLUME in remoteOptions.value &&
             state.phase == TvConnectionPhase.CONNECTED &&
             state.supportedFeatures and required == required
+    }
+
+    fun startVoice() {
+        if (voiceJob?.isCompleted == false || RemoteOption.MICROPHONE !in remoteOptions.value) return
+        val stop = CompletableDeferred<Unit>()
+        stopRecording = stop
+        mutableVoiceState.value = VoiceState.STARTING
+        voiceJob = viewModelScope.launch {
+            try {
+                pressAndHoldController.stop()
+                remoteController.sendMicrophoneAudio(stop) {
+                    mutableVoiceState.value = VoiceState.LISTENING
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportFailure("Microphone unavailable", error)
+            } finally {
+                stopRecording = null
+                mutableVoiceState.value = VoiceState.IDLE
+            }
+        }
+    }
+
+    fun stopVoice() {
+        stopRecording?.complete(Unit)
+    }
+
+    fun cancelVoice() {
+        voiceJob?.cancel()
+    }
+
+    fun microphonePermissionDenied() {
+        operationMessages.tryEmit("Allow microphone access to use voice search.")
     }
 
     fun startHolding(command: RemoteCommand) {
@@ -214,3 +257,5 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
+
+internal enum class VoiceState { IDLE, STARTING, LISTENING }

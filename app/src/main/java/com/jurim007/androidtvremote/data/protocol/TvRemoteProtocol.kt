@@ -8,6 +8,8 @@ internal object TvRemoteProtocol {
     const val FEATURE_PING = 1
     const val FEATURE_KEY = 1 shl 1
     const val FEATURE_IME = 1 shl 2
+    const val FEATURE_VOICE = 1 shl 3
+    const val VOICE_FEATURES = FEATURE_KEY or FEATURE_VOICE
     const val FEATURE_POWER = 1 shl 5
     const val FEATURE_VOLUME = 1 shl 6
     const val FEATURE_APP_LINK = 1 shl 9
@@ -92,6 +94,24 @@ internal object TvRemoteProtocol {
         val payload = ProtoWriter().varint(1, sequence).build()
         return ProtoWriter().bytes(9, payload).build()
     }
+
+    fun voiceSessionId(message: ByteArray, field: Int): Int? =
+        remoteField(message, field)?.let { payload ->
+            (ProtoWire.parse(payload).firstOrNull { it.number == 1 }?.varint ?: 0).toInt()
+        }
+
+    fun requestVoice(): ByteArray = keyCommand(84, DIRECTION_SHORT)
+
+    fun beginVoice(sessionId: Int): ByteArray =
+        ProtoWriter().bytes(30, ProtoWriter().int(1, sessionId.toLong()).build()).build()
+
+    fun voiceAudio(sessionId: Int, samples: ByteArray): ByteArray {
+        val payload = ProtoWriter().int(1, sessionId.toLong()).bytes(2, samples).build()
+        return ProtoWriter().bytes(31, payload).build()
+    }
+
+    fun endVoice(sessionId: Int): ByteArray =
+        ProtoWriter().bytes(32, ProtoWriter().int(1, sessionId.toLong()).build()).build()
 
     fun keyCommand(keyCode: Int, direction: Long): ByteArray {
         val keyInject = ProtoWriter()

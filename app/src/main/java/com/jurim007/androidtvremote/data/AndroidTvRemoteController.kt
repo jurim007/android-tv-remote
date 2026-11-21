@@ -26,6 +26,8 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,7 +44,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AndroidTvRemoteController(context: Context) : RemoteController {
     private val appContext = context.applicationContext
@@ -80,6 +84,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private var remoteSocket: SSLSocket? = null
     private var connectingSocket: SSLSocket? = null
     private var readerJob: Job? = null
+    private var voiceRequest: VoiceRequest? = null
     private var reconnectJob: Job? = null
     private var holdingJob: Job? = null
     @Volatile
@@ -390,6 +395,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
     private fun resetConnectionLocked(): List<SSLSocket> {
         connectionGeneration += 1
+        clearVoiceLocked()
         clearHoldLocked()
         reconnectJob?.cancel()
         reconnectJob = null
@@ -401,6 +407,90 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         activeFeatures = 0
         mutableConnectionState.value = TvConnectionState()
         return sockets
+    }
+
+    internal suspend fun sendMicrophoneAudio(stop: Deferred<Unit>, onListening: () -> Unit) =
+        withContext(Dispatchers.IO) {
+            val (voice, device) = synchronized(connectionLock) {
+                val socket = remoteSocket ?: throw IOException("Connect to a TV to use the microphone.")
+                if (activeFeatures and TvRemoteProtocol.VOICE_FEATURES != TvRemoteProtocol.VOICE_FEATURES) {
+                    throw IOException("This TV does not support voice through the remote.")
+                }
+                check(voiceRequest == null) { "A microphone session is already active." }
+                val request = VoiceRequest(socket)
+                voiceRequest = request
+                request to checkNotNull(connectionState.value.device)
+            }
+
+            var sessionId: Int? = null
+            try {
+                writeVoiceMessage(voice.socket, TvRemoteProtocol.requestVoice())
+                val ready = withTimeoutOrNull(VOICE_RESPONSE_TIMEOUT_MS) {
+                    select<Boolean> {
+                        voice.sessionId.onAwait { true }
+                        stop.onAwait { false }
+                        voice.finished.onAwait { false }
+                    }
+                } ?: throw IOException("The TV did not start voice search.")
+                if (!ready) return@withContext
+                sessionId = voice.sessionId.await()
+                writeVoiceMessage(voice.socket, TvRemoteProtocol.beginVoice(sessionId))
+                if (!stop.isCompleted && !voice.finished.isCompleted) {
+                    recordVoice(
+                        shouldStop = { stop.isCompleted || voice.finished.isCompleted },
+                        onListening = onListening,
+                        sendAudio = { samples ->
+                            if (!voice.finished.isCompleted) {
+                                writeVoiceMessage(voice.socket, TvRemoteProtocol.voiceAudio(sessionId, samples))
+                            }
+                        },
+                    )
+                }
+            } catch (error: VoiceWriteException) {
+                handleConnectionLoss(voice.socket, device, error)
+                throw error
+            } finally {
+                try {
+                    if (sessionId != null && !voice.finished.isCompleted) {
+                        writeVoiceMessage(voice.socket, TvRemoteProtocol.endVoice(sessionId))
+                    }
+                } catch (error: VoiceWriteException) {
+                    handleConnectionLoss(voice.socket, device, error)
+                } finally {
+                    synchronized(connectionLock) {
+                        if (voiceRequest === voice) voiceRequest = null
+                    }
+                }
+            }
+        }
+
+    private fun writeVoiceMessage(socket: SSLSocket, message: ByteArray) {
+        try {
+            writeMessage(socket, message)
+        } catch (error: IOException) {
+            throw VoiceWriteException(error)
+        }
+    }
+
+    private fun clearVoiceLocked() {
+        voiceRequest?.finished?.complete(Unit)
+        voiceRequest = null
+    }
+
+    private fun handleVoiceMessage(socket: SSLSocket, message: ByteArray): Boolean {
+        val begin = TvRemoteProtocol.voiceSessionId(message, 30)
+        val end = TvRemoteProtocol.voiceSessionId(message, 32)
+        if (begin == null && end == null) return false
+        synchronized(connectionLock) {
+            voiceRequest?.takeIf { it.socket === socket }?.let { voice ->
+                if (begin != null && voice.receivedSessionId == null) {
+                    voice.receivedSessionId = begin
+                    voice.sessionId.complete(begin)
+                }
+                if (end != null && voice.receivedSessionId == end) voice.finished.complete(Unit)
+            }
+        }
+        return true
     }
 
     override fun send(command: RemoteCommand) {
@@ -548,6 +638,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 val response = TvRemoteProtocol.pingResponse(message)
                 if (response != null) {
                     writeMessage(socket, response)
+                } else if (handleVoiceMessage(socket, message)) {
+                    continue
                 } else if (TvRemoteProtocol.hasRemoteError(message)) {
                     val rejected = TvRemoteProtocol.rejectedRemoteCommand(message)
                     val appLink = rejected?.let { TvRemoteProtocol.remoteField(it, 90) }
@@ -579,6 +671,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             if (socket !== remoteSocket) return
             remoteSocket = null
             activeFeatures = 0
+            clearVoiceLocked()
             clearHoldLocked()
             readerJob?.cancel()
             readerJob = null
@@ -785,6 +878,14 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
+    private class VoiceRequest(val socket: SSLSocket) {
+        val sessionId = CompletableDeferred<Int>()
+        val finished = CompletableDeferred<Unit>()
+        var receivedSessionId: Int? = null
+    }
+
+    private class VoiceWriteException(cause: IOException) : IOException("The TV voice connection was interrupted.", cause)
+
     private companion object {
         const val TAG = "AndroidTvRemote"
         const val SERVICE_TYPE_BASE = "_androidtvremote2._tcp"
@@ -797,10 +898,12 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         const val MAX_HANDSHAKE_MESSAGES = 12
         const val RECONNECT_DELAY_MS = 2_000L
         const val MAX_RECONNECT_ATTEMPTS = 5
+        const val VOICE_RESPONSE_TIMEOUT_MS = 2_500L
         const val SUPPORTED_FEATURES =
             TvRemoteProtocol.FEATURE_PING or
                 TvRemoteProtocol.FEATURE_KEY or
                 TvRemoteProtocol.FEATURE_IME or
+                TvRemoteProtocol.FEATURE_VOICE or
                 TvRemoteProtocol.FEATURE_POWER or
                 TvRemoteProtocol.FEATURE_VOLUME or
                 TvRemoteProtocol.FEATURE_APP_LINK

@@ -401,6 +401,7 @@ private val CONTROL_OPTIONS = listOf(
     RemoteOption.MUTE to "Show Mute",
     RemoteOption.SOURCE to "Show Source",
     RemoteOption.SHORTCUTS to "Show app shortcuts",
+    RemoteOption.MICROPHONE to "Show microphone",
 )
 
 @Composable

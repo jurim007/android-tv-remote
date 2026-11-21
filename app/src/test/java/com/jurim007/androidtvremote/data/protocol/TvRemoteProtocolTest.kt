@@ -14,6 +14,23 @@ import org.junit.Test
 
 class TvRemoteProtocolTest {
     @Test
+    fun voiceMessagesCarryTheSessionIdAndPcmPayload() {
+        assertArrayEquals(
+            byteArrayOf(0x52, 0x04, 0x08, 84, 0x10, 0x03),
+            TvRemoteProtocol.requestVoice(),
+        )
+        val begin = TvRemoteProtocol.beginVoice(123)
+        assertEquals(123, TvRemoteProtocol.voiceSessionId(begin, 30))
+        val samples = byteArrayOf(1, -1)
+        val audio = TvRemoteProtocol.voiceAudio(123, samples)
+        assertEquals(123, TvRemoteProtocol.voiceSessionId(audio, 31))
+        assertArrayEquals(samples, TvRemoteProtocol.remoteField(
+            checkNotNull(TvRemoteProtocol.remoteField(audio, 31)), 2,
+        ))
+        assertEquals(123, TvRemoteProtocol.voiceSessionId(TvRemoteProtocol.endVoice(123), 32))
+    }
+
+    @Test
     fun appLaunchUsesPackageIdWhenNoExplicitLinkIsSet() {
         val message = TvRemoteProtocol.launchApp(RemoteCommand.LaunchApp("com.example.tv"))
         val link = ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(message, 90))).single()
