@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -54,6 +55,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -665,6 +667,7 @@ private fun DPad(
     ) {
         val centerSize = (maxWidth * 0.55f).coerceAtMost(116.dp)
         val arrowWidth = (maxWidth * 0.34f).coerceAtLeast(52.dp)
+        val sideArrowOffset = (maxWidth - centerSize) / 4 - arrowWidth / 2
         HoldTarget(
             description = "Navigate up",
             onStart = { viewModel.startHolding(RemoteCommand.Up) },
@@ -694,7 +697,7 @@ private fun DPad(
         ) { pressed ->
             ControlGlyph(
                 icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.offset(x = sideArrowOffset).size(40.dp),
                 pressed = pressed,
             )
         }
@@ -710,7 +713,7 @@ private fun DPad(
         ) { pressed ->
             ControlGlyph(
                 icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.offset(x = -sideArrowOffset).size(40.dp),
                 pressed = pressed,
             )
         }
@@ -840,6 +843,7 @@ private fun UtilityBar(
     modifier: Modifier = Modifier,
 ) {
     var typeDialogOpen by remember { mutableStateOf(false) }
+    var sourceMenuOpen by remember { mutableStateOf(false) }
 
     Row(
         modifier = modifier
@@ -862,31 +866,41 @@ private fun UtilityBar(
             )
         }
         UtilityDivider()
-        UtilityAction(
-            description = "Source",
-            onClick = { onCommand(RemoteCommand.Source) },
-            modifier = Modifier.weight(1.2f),
-            label = "Source",
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Input,
-                contentDescription = null,
-                tint = RemoteText,
-                modifier = Modifier.size(28.dp),
-            )
-        }
-        UtilityDivider()
-        UtilityAction(
-            description = "Backspace",
-            onClick = { onCommand(RemoteCommand.Delete) },
-            modifier = Modifier.weight(1f),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Backspace,
-                contentDescription = null,
-                tint = RemoteText,
-                modifier = Modifier.size(26.dp),
-            )
+        Box(Modifier.weight(1.2f).fillMaxHeight()) {
+            UtilityAction(
+                description = "Source",
+                onClick = { sourceMenuOpen = true },
+                modifier = Modifier.fillMaxWidth(),
+                label = "Source",
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Input,
+                    contentDescription = null,
+                    tint = RemoteText,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = sourceMenuOpen,
+                onDismissRequest = { sourceMenuOpen = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Open TV input menu") },
+                    onClick = {
+                        sourceMenuOpen = false
+                        onCommand(RemoteCommand.Source)
+                    },
+                )
+                RemoteCommand.Hdmi.entries.forEach { input ->
+                    DropdownMenuItem(
+                        text = { Text("HDMI ${input.port}") },
+                        onClick = {
+                            sourceMenuOpen = false
+                            onCommand(input)
+                        },
+                    )
+                }
+            }
         }
         UtilityDivider()
         UtilityAction(
@@ -910,6 +924,7 @@ private fun UtilityBar(
                 onCommand(RemoteCommand.SendText(text))
                 typeDialogOpen = false
             },
+            onDelete = { onCommand(RemoteCommand.Delete) },
             onDismiss = { typeDialogOpen = false },
         )
     }
@@ -962,6 +977,7 @@ private fun UtilityDivider() {
 @Composable
 private fun TypeTextDialog(
     onSend: (String) -> Unit,
+    onDelete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var value by rememberSaveable { mutableStateOf("") }
@@ -984,6 +1000,14 @@ private fun TypeTextDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Text") },
+                trailingIcon = {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Backspace,
+                            contentDescription = "Delete character on TV",
+                        )
+                    }
+                },
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Send,

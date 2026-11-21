@@ -133,8 +133,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun connect(device: TvDevice) {
         viewModelScope.launch {
             try {
-                shortcutPreferences.selectTv(device.id)
-                remoteController.connect(device)
+                if (shortcutPreferences.selectTv(device.id)) {
+                    remoteController.connect(device)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -148,10 +149,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun removeTv(deviceId: String) {
         viewModelScope.launch {
             try {
+                shortcutPreferences.removeTv(deviceId)
                 if (connectionState.value.device?.id == deviceId) {
                     remoteController.disconnect()
                 }
-                shortcutPreferences.removeTv(deviceId)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

@@ -383,7 +383,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
     override suspend fun disconnect() {
         val sockets = synchronized(connectionLock) { resetConnectionLocked() }
-        sockets.forEach { it.closeQuietly() }
+        withContext(Dispatchers.IO) {
+            sockets.forEach { it.closeQuietly() }
+        }
     }
 
     private fun resetConnectionLocked(): List<SSLSocket> {
@@ -501,13 +503,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             }
 
             is RemoteCommand.LaunchApp -> {
-                val uri = command.launchUri?.trim()?.takeIf(String::isNotEmpty)
-                if (uri == null) {
-                    emitMessage("Add a TV app link in Settings; package IDs alone cannot launch apps.")
-                } else if (activeFeatures and TvRemoteProtocol.FEATURE_APP_LINK == 0) {
+                if (activeFeatures and TvRemoteProtocol.FEATURE_APP_LINK == 0) {
                     emitMessage("This TV does not support app links.")
                 } else {
-                    writeMessage(socket, TvRemoteProtocol.appLink(uri))
+                    writeMessage(socket, TvRemoteProtocol.launchApp(command))
                 }
             }
 

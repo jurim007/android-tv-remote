@@ -14,6 +14,20 @@ import org.junit.Test
 
 class TvRemoteProtocolTest {
     @Test
+    fun appLaunchUsesPackageIdWhenNoExplicitLinkIsSet() {
+        val message = TvRemoteProtocol.launchApp(RemoteCommand.LaunchApp("com.example.tv", null))
+        val link = ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(message, 90))).single()
+        assertEquals("market://launch?id=com.example.tv", link.bytes?.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun hdmiInputsUseDedicatedAndroidKeys() {
+        assertEquals(listOf(243, 244, 245, 246), RemoteCommand.Hdmi.entries.map {
+            TvRemoteProtocol.keyCode(it)
+        })
+    }
+
+    @Test
     fun pongEchoesTheTvSequence() {
         val ping = byteArrayOf(0x42, 0x05, 0x08, 0x96.toByte(), 0x01, 0x10, 0x01)
         assertArrayEquals(

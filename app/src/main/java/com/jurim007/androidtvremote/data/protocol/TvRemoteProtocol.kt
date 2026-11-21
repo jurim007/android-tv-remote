@@ -114,13 +114,16 @@ internal object TvRemoteProtocol {
             RemoteCommand.ChannelDown -> 167
             RemoteCommand.Mute -> 164
             RemoteCommand.Source -> 178
+            is RemoteCommand.Hdmi -> 242 + command.port
             RemoteCommand.Delete -> 67
             is RemoteCommand.SendText,
             is RemoteCommand.LaunchApp,
             -> null
         }
 
-    fun appLink(uri: String): ByteArray {
+    fun launchApp(command: RemoteCommand.LaunchApp): ByteArray {
+        val uri = command.launchUri?.trim()?.takeIf(String::isNotEmpty)
+            ?: "market://launch?id=${command.packageName.trim()}"
         val request = ProtoWriter().string(1, uri).build()
         return ProtoWriter().bytes(90, request).build()
     }

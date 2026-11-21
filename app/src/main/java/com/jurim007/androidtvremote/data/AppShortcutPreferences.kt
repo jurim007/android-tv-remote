@@ -57,10 +57,16 @@ class AppShortcutPreferences(context: Context) {
         }
     }
 
-    suspend fun selectTv(deviceId: String) {
-        dataStore.edit { preferences ->
-            preferences[SELECTED_TV_ID] = deviceId
+    suspend fun selectTv(deviceId: String): Boolean {
+        val updated = dataStore.edit { preferences ->
+            val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
+            if (devices.any { it.id == deviceId }) {
+                preferences[SELECTED_TV_ID] = deviceId
+            } else if (preferences[SELECTED_TV_ID] == deviceId) {
+                preferences.remove(SELECTED_TV_ID)
+            }
         }
+        return updated[SELECTED_TV_ID] == deviceId
     }
 
     suspend fun removeTv(deviceId: String) {

@@ -176,7 +176,7 @@ fun RemoteSettingsDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Add up to four TV apps by package ID. Set a TV launch URI if the app supports one, and choose an icon image by link or upload.",
+                    text = "Add up to four TV apps by package ID. If your TV ignores the package ID, you can set a TV app launch URI.",
                     color = RemoteMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
