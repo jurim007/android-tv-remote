@@ -86,9 +86,8 @@ internal object TvRemoteProtocol {
     fun pingResponse(message: ByteArray): ByteArray? {
         val ping = remoteField(message, 8) ?: return null
         val sequence = ProtoWire.parse(ping).firstOrNull { it.number == 1 }?.varint ?: 0L
-        return ProtoWriter()
-            .bytes(9, ProtoWriter().int(1, sequence).build())
-            .build()
+        val payload = ProtoWriter().varint(1, sequence).build()
+        return ProtoWriter().bytes(9, payload).build()
     }
 
     fun keyCommand(keyCode: Int, direction: Long): ByteArray {
@@ -115,6 +114,7 @@ internal object TvRemoteProtocol {
             RemoteCommand.ChannelDown -> 167
             RemoteCommand.Mute -> 164
             RemoteCommand.Source -> 178
+            RemoteCommand.Delete -> 67
             is RemoteCommand.SendText,
             is RemoteCommand.LaunchApp,
             -> null

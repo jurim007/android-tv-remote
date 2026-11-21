@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.Input
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -763,37 +764,46 @@ private fun Touchpad(
             .border(1.5.dp, RemoteBorder.copy(alpha = 0.9f), RoundedCornerShape(36.dp))
             .pointerInput(viewModel, thresholdPx) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    var end = down.position
-                    var swiped = false
-                    while (!swiped) {
-                        val event = awaitPointerEvent(PointerEventPass.Main)
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        end = change.position
-                        val delta = end - down.position
-                        val horizontal = abs(delta.x) >= abs(delta.y)
-                        val distance = if (horizontal) abs(delta.x) else abs(delta.y)
-                        if (distance >= thresholdPx) {
-                            val command = if (horizontal) {
-                                if (delta.x > 0) RemoteCommand.Right else RemoteCommand.Left
-                            } else {
-                                if (delta.y > 0) RemoteCommand.Down else RemoteCommand.Up
+                    val down = awaitFirstDown()
+                    down.consume()
+                    var holding = false
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed) break
+                            change.consume()
+
+                            if (!holding) {
+                                val delta = change.position - down.position
+                                val horizontal = abs(delta.x) >= abs(delta.y)
+                                val distance = if (horizontal) abs(delta.x) else abs(delta.y)
+                                if (distance >= thresholdPx) {
+                                    val command = if (horizontal) {
+                                        if (delta.x > 0) RemoteCommand.Right else RemoteCommand.Left
+                                    } else {
+                                        if (delta.y > 0) RemoteCommand.Down else RemoteCommand.Up
+                                    }
+                                    viewModel.startHolding(command)
+                                    holding = true
+                                }
                             }
-                            viewModel.send(command)
-                            swiped = true
+
+                            if (!change.pressed) {
+                                if (!holding && change.position.isInside(size)) {
+                                    viewModel.send(RemoteCommand.Select)
+                                }
+                                break
+                            }
                         }
-                        if (!change.pressed) break
-                    }
-                    if (!swiped && end.x >= 0f && end.y >= 0f &&
-                        end.x < size.width && end.y < size.height
-                    ) {
-                        viewModel.send(RemoteCommand.Select)
+                    } finally {
+                        if (holding) viewModel.stopHolding()
                     }
                 }
             }
             .semantics {
                 role = Role.Button
-                contentDescription = "Touchpad. Swipe to navigate, tap to select."
+                contentDescription = "Touchpad. Swipe and hold to repeat, tap to select."
                 onClick(label = "Select") {
                     viewModel.send(RemoteCommand.Select)
                     true
@@ -810,7 +820,7 @@ private fun Touchpad(
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Swipe to navigate",
+                text = "Swipe and hold to repeat",
                 color = RemoteText,
                 fontSize = 15.sp,
             )
@@ -863,6 +873,19 @@ private fun UtilityBar(
                 contentDescription = null,
                 tint = RemoteText,
                 modifier = Modifier.size(28.dp),
+            )
+        }
+        UtilityDivider()
+        UtilityAction(
+            description = "Backspace",
+            onClick = { onCommand(RemoteCommand.Delete) },
+            modifier = Modifier.weight(1f),
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.Backspace,
+                contentDescription = null,
+                tint = RemoteText,
+                modifier = Modifier.size(26.dp),
             )
         }
         UtilityDivider()
@@ -1122,6 +1145,6 @@ private fun surfaceBrush(): Brush = Brush.linearGradient(
     ),
 )
 
-private fun androidx.compose.ui.geometry.Offset.isInside(size: IntSize): Boolean =
+private fun Offset.isInside(size: IntSize): Boolean =
     x >= 0f && y >= 0f && x < size.width && y < size.height
 
