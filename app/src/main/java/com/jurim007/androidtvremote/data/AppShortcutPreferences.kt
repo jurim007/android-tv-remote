@@ -58,6 +58,14 @@ class AppShortcutPreferences(context: Context) {
         }
     }
 
+    suspend fun restoreRemoteDefaults() {
+        dataStore.edit { preferences ->
+            preferences.remove(TOUCHPAD_ENABLED)
+            preferences.remove(TV_APP_SHORTCUTS)
+            optionKeys.values.forEach { preferences.remove(it) }
+        }
+    }
+
     suspend fun saveTv(device: TvDevice) {
         requireNotNull(device.serverCertificateFingerprint) {
             "A TV must complete pairing before it can be saved."

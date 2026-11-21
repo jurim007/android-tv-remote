@@ -264,6 +264,7 @@ fun RemoteScreen(
             onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
             options = options,
             onOptionChange = viewModel::setRemoteOption,
+            onRestoreDefaults = viewModel::restoreRemoteDefaults,
             onManageTvs = { connectionDialogMode = "manage" },
             onShortcutsChange = viewModel::saveShortcuts,
             connectionState = connectionState,
@@ -518,8 +519,6 @@ private fun RemoteControls(
                     groupDescription = "Volume",
                     modifier = Modifier.fillMaxHeight(),
                 )
-            } else if (showChannel) {
-                Spacer(Modifier.width(sideWidth))
             }
             if (touchpadEnabled) {
                 Touchpad(
@@ -547,8 +546,6 @@ private fun RemoteControls(
                     groupDescription = "Channel",
                     modifier = Modifier.fillMaxHeight(),
                 )
-            } else if (showVolume) {
-                Spacer(Modifier.width(sideWidth))
             }
         }
         Spacer(Modifier.height(14.dp))

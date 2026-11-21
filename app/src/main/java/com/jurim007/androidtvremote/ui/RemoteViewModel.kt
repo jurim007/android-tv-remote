@@ -95,6 +95,18 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun restoreRemoteDefaults() {
+        viewModelScope.launch {
+            try {
+                shortcutPreferences.restoreRemoteDefaults()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportFailure("Could not restore remote defaults", error)
+            }
+        }
+    }
+
     fun canUsePhoneVolume(): Boolean {
         val state = connectionState.value
         val required = TvRemoteProtocol.FEATURE_KEY or TvRemoteProtocol.FEATURE_VOLUME
