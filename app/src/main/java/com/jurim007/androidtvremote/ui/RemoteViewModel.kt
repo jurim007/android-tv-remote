@@ -54,6 +54,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     )
     val discoveredDevices = remoteController.discoveredDevices
     val connectionState = remoteController.connectionState
+    val tclInputsTvIds = shortcutPreferences.tclInputsTvIds.stateIn(
+        viewModelScope, SharingStarted.Eagerly, emptySet(),
+    )
     val messages = merge(remoteController.messages, operationMessages)
 
     init {
@@ -65,7 +68,25 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun send(command: RemoteCommand) {
-        remoteController.send(command)
+        val deviceId = connectionState.value.device?.id
+        val tvCommand = if (command == RemoteCommand.Source && deviceId in tclInputsTvIds.value) {
+            RemoteCommand.LaunchApp("com.tcl.suspension")
+        } else {
+            command
+        }
+        remoteController.send(tvCommand)
+    }
+
+    fun setTclInputsEnabled(deviceId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                shortcutPreferences.setTclInputsEnabled(deviceId, enabled)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportFailure("Could not save the Source setting", error)
+            }
+        }
     }
 
     fun saveShortcuts(shortcuts: List<TvAppShortcut>) {

@@ -34,6 +34,12 @@ Mute, Source, and app shortcuts. All optional controls are visible by default. B
 vibration is on by default. Phone volume keys control the TV only when enabled and
 connected to a TV that supports volume control.
 
+**Source** sends the standard Android TV input key over the paired connection. If your
+TCL ignores that key, connect to it and enable **TCL Inputs via AVA Connect** under
+**Remote settings → Devices**. This per-TV option uses the AVA Connect setup above to
+open the built-in Inputs panel. Then use the D-pad to choose an input. This option was
+verified on a TCL 55P69K.
+
 On TVs that advertise voice support, the microphone appears between Back and Home.
 Tap it, allow microphone access on the phone, and speak. TVControl streams the audio
 over the paired connection for the TV to handle. Tap Stop to finish. Voice recording

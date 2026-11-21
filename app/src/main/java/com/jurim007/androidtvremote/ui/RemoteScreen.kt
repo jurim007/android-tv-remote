@@ -296,12 +296,15 @@ fun RemoteScreen(
         )
     }
     if (settingsOpen && connectionDialogMode == null) {
+        val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
         RemoteSettingsDialog(
             shortcuts = shortcuts,
             touchpadEnabled = touchpadEnabled,
             onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
             options = options,
             onOptionChange = viewModel::setRemoteOption,
+            tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
+            onTclInputsChange = viewModel::setTclInputsEnabled,
             onRestoreDefaults = viewModel::restoreRemoteDefaults,
             onManageTvs = { connectionDialogMode = "manage" },
             onShortcutsChange = viewModel::saveShortcuts,

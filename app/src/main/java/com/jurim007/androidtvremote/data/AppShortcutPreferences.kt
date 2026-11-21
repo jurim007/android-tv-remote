@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.RemoteOption
@@ -46,6 +47,17 @@ class AppShortcutPreferences(context: Context) {
         preferences[SELECTED_TV_ID]
     }
 
+    val tclInputsTvIds: Flow<Set<String>> = dataStore.data.map { preferences ->
+        preferences[TCL_INPUTS_TV_IDS].orEmpty()
+    }
+
+    suspend fun setTclInputsEnabled(deviceId: String, enabled: Boolean) {
+        dataStore.edit { preferences ->
+            val tvIds = preferences[TCL_INPUTS_TV_IDS].orEmpty()
+            preferences[TCL_INPUTS_TV_IDS] = if (enabled) tvIds + deviceId else tvIds - deviceId
+        }
+    }
+
     suspend fun saveShortcuts(shortcuts: List<TvAppShortcut>) {
         dataStore.edit { preferences ->
             preferences[TV_APP_SHORTCUTS] = encodeShortcuts(shortcuts.take(MAX_TV_SHORTCUTS))
@@ -62,6 +74,7 @@ class AppShortcutPreferences(context: Context) {
         dataStore.edit { preferences ->
             preferences.remove(TOUCHPAD_ENABLED)
             preferences.remove(TV_APP_SHORTCUTS)
+            preferences.remove(TCL_INPUTS_TV_IDS)
             optionKeys.values.forEach { preferences.remove(it) }
         }
     }
@@ -95,6 +108,7 @@ class AppShortcutPreferences(context: Context) {
             val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
             preferences[SAVED_TVS] =
                 encodeTvDevices(devices.filterNot { it.id == deviceId })
+            preferences[TCL_INPUTS_TV_IDS] = preferences[TCL_INPUTS_TV_IDS].orEmpty() - deviceId
             if (preferences[SELECTED_TV_ID] == deviceId) {
                 preferences.remove(SELECTED_TV_ID)
             }
@@ -107,6 +121,7 @@ class AppShortcutPreferences(context: Context) {
         val TOUCHPAD_ENABLED = booleanPreferencesKey("touchpad_enabled")
         val SAVED_TVS = stringPreferencesKey("saved_tvs")
         val SELECTED_TV_ID = stringPreferencesKey("selected_tv_id")
+        val TCL_INPUTS_TV_IDS = stringSetPreferencesKey("tcl_inputs_tv_ids")
 
         fun encodeShortcuts(shortcuts: List<TvAppShortcut>): String =
             JSONArray().apply {

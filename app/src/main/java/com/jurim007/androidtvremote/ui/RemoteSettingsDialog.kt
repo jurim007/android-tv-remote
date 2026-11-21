@@ -117,6 +117,8 @@ fun RemoteSettingsDialog(
     onTouchpadEnabledChange: (Boolean) -> Unit,
     options: Set<RemoteOption>,
     onOptionChange: (RemoteOption, Boolean) -> Unit,
+    tclInputsEnabled: Boolean,
+    onTclInputsChange: (String, Boolean) -> Unit,
     onRestoreDefaults: () -> Unit,
     onManageTvs: () -> Unit,
     onShortcutsChange: (List<TvAppShortcut>) -> Unit,
@@ -264,6 +266,15 @@ fun RemoteSettingsDialog(
                 }
                 SettingsSection("Devices") {
                     SettingsLink("Manage TVs", connectionDescription, onManageTvs)
+                    if (connectionState.phase == TvConnectionPhase.CONNECTED) {
+                        connectionState.device?.let { tv ->
+                            SettingsToggle(
+                                title = "TCL Inputs via AVA Connect",
+                                detail = "Open the native Inputs panel on ${tv.name}. Requires AVA Connect on the TV.",
+                                enabled = tclInputsEnabled,
+                            ) { onTclInputsChange(tv.id, it) }
+                        }
+                    }
                 }
                 SettingsSection("Remote layout") {
                     NavigationStylePicker(

@@ -638,9 +638,6 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 val keyCode = TvRemoteProtocol.keyCode(command) ?: return
                 if (!supportsCommand(command)) {
                     emitMessage("This TV does not support that remote command.")
-                } else if (command == RemoteCommand.Source) {
-                    writeMessage(socket, TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_START_LONG))
-                    writeMessage(socket, TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_END_LONG))
                 } else {
                     writeMessage(
                         socket,
