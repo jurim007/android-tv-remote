@@ -168,7 +168,7 @@ fun RemoteScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 4.dp),
+            .padding(start = 20.dp, top = 26.dp, end = 20.dp, bottom = 4.dp),
     ) {
         // Keep IME-driven height changes from reflowing the controls behind dialogs.
         val layoutHeight = remember(maxWidth) { maxHeight }
@@ -178,11 +178,10 @@ fun RemoteScreen(
             .coerceAtLeast(150.dp)
         val compact = layoutHeight < 740.dp
         val headerHeight = if (layoutHeight < 620.dp) 56.dp else 66.dp
-        val topGap = if (compact) (layoutHeight * 0.03f).coerceAtLeast(10.dp) else 24.dp
-        val remoteGap = if (compact) {
-            (layoutHeight * 0.045f).coerceAtLeast(12.dp)
+        val shortcutGap = if (compact) {
+            (layoutHeight * 0.0375f).coerceAtLeast(11.dp)
         } else {
-            54.dp
+            39.dp
         }
         val utilityGap = if (compact) (layoutHeight * 0.025f).coerceAtLeast(10.dp) else 24.dp
         val utilityHeight = if (layoutHeight < 620.dp) 60.dp else 72.dp
@@ -207,7 +206,7 @@ fun RemoteScreen(
                     .fillMaxWidth()
                     .height(headerHeight),
             )
-            Spacer(Modifier.height(topGap))
+            Spacer(Modifier.height(shortcutGap))
             AppShortcutsRow(
                 shortcuts = shortcuts,
                 onLaunchApp = { shortcut ->
@@ -217,7 +216,7 @@ fun RemoteScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(remoteGap))
+            Spacer(Modifier.height(shortcutGap))
             RemoteControls(
                 viewModel = viewModel,
                 touchpadEnabled = touchpadEnabled,
