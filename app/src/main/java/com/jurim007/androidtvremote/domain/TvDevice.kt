@@ -30,4 +30,5 @@ data class TvConnectionState(
     val message: String? = null,
     val supportedFeatures: Int = 0,
     val pairingReady: Boolean = false,
+    val needsPairing: Boolean = false,
 )

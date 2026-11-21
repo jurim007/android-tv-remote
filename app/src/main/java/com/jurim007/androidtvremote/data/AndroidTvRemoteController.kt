@@ -22,6 +22,7 @@ import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLException
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
@@ -319,7 +320,11 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             synchronized(connectionLock) {
                 if (generation != connectionGeneration) return@withContext
                 Log.w(TAG, "Could not connect to ${device.name}", error)
-                setError("Could not connect to ${device.name}: ${error.message ?: "connection failed"}", device)
+                if (error.requiresNewPairing()) {
+                    setPairingRequired(device)
+                } else {
+                    setError("Could not connect to ${device.name}: ${error.message ?: "connection failed"}", device)
+                }
             }
             throw error
         }
@@ -615,14 +620,16 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
     private fun sendCommand(socket: SSLSocket, command: RemoteCommand) {
         when (command) {
-            is RemoteCommand.SendText -> {
-                if (activeFeatures and TvRemoteProtocol.FEATURE_IME == 0) {
-                    emitMessage("Text input is not supported by this TV right now.")
-                } else {
-                    writeMessage(
-                        socket,
-                        TvRemoteProtocol.textEdit(command.text, imeField),
-                    )
+            is RemoteCommand.SendText -> sendText(socket, command.text)
+
+            is RemoteCommand.Enter -> {
+                val confirmation = if (activeFeatures and TvRemoteProtocol.FEATURE_IME != 0) {
+                    TvRemoteProtocol.confirmEditor(command.text, imeField)
+                } else null
+                if (confirmation != null) {
+                    writeMessage(socket, confirmation)
+                } else if (command.text.isBlank() || sendText(socket, command.text)) {
+                    sendKey(socket, command)
                 }
             }
 
@@ -634,17 +641,25 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 }
             }
 
-            else -> {
-                val keyCode = TvRemoteProtocol.keyCode(command) ?: return
-                if (!supportsCommand(command)) {
-                    emitMessage("This TV does not support that remote command.")
-                } else {
-                    writeMessage(
-                        socket,
-                        TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_SHORT),
-                    )
-                }
-            }
+            else -> sendKey(socket, command)
+        }
+    }
+
+    private fun sendText(socket: SSLSocket, text: String): Boolean {
+        if (activeFeatures and TvRemoteProtocol.FEATURE_IME == 0) {
+            emitMessage("Text input is not supported by this TV right now.")
+            return false
+        }
+        writeMessage(socket, TvRemoteProtocol.textEdit(text, imeField))
+        return true
+    }
+
+    private fun sendKey(socket: SSLSocket, command: RemoteCommand) {
+        val keyCode = TvRemoteProtocol.keyCode(command) ?: return
+        if (!supportsCommand(command)) {
+            emitMessage("This TV does not support that remote command.")
+        } else {
+            writeMessage(socket, TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_SHORT))
         }
     }
 
@@ -706,13 +721,17 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             readerJob?.cancel()
             readerJob = null
             Log.w(TAG, "Connection to ${device.name} dropped", error)
-            val generation = connectionGeneration
-            mutableConnectionState.value = TvConnectionState(
-                phase = TvConnectionPhase.CONNECTING,
-                device = device,
-                message = "Reconnecting to ${device.name}…",
-            )
-            reconnectJob = scope.launch { reconnect(device, generation) }
+            if (error.requiresNewPairing()) {
+                setPairingRequired(device)
+            } else {
+                val generation = connectionGeneration
+                mutableConnectionState.value = TvConnectionState(
+                    phase = TvConnectionPhase.CONNECTING,
+                    device = device,
+                    message = "Reconnecting to ${device.name}…",
+                )
+                reconnectJob = scope.launch { reconnect(device, generation) }
+            }
         }
         socket.closeQuietly()
     }
@@ -727,6 +746,15 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 throw error
             } catch (error: Exception) {
                 Log.w(TAG, "Reconnect attempt $attempt failed", error)
+                if (error.requiresNewPairing()) {
+                    synchronized(connectionLock) {
+                        if (generation == connectionGeneration) {
+                            reconnectJob = null
+                            setPairingRequired(device)
+                        }
+                    }
+                    return
+                }
             }
         }
         synchronized(connectionLock) {
@@ -828,11 +856,24 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         pendingCertificateFingerprint = null
     }
 
-    private fun setError(message: String, device: TvDevice? = null) {
+    private fun setPairingRequired(device: TvDevice) {
+        setError("Pair with ${device.name} again to reconnect.", device, needsPairing = true)
+    }
+
+    private fun Throwable.requiresNewPairing(): Boolean = generateSequence(this) { it.cause }.any { cause ->
+        cause is TvCertificateChangedException || (cause is SSLException && cause.message.orEmpty().let {
+            it.contains("alert_certificate_unknown", ignoreCase = true) ||
+                it.contains("alert_bad_certificate", ignoreCase = true) ||
+                it.contains("alert_certificate_required", ignoreCase = true)
+        })
+    }
+
+    private fun setError(message: String, device: TvDevice? = null, needsPairing: Boolean = false) {
         mutableConnectionState.value = TvConnectionState(
             phase = TvConnectionPhase.ERROR,
             device = device ?: mutableConnectionState.value.device,
             message = message,
+            needsPairing = needsPairing,
         )
         emitMessage(message)
     }
@@ -905,13 +946,15 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     .digest(certificate.encoded)
                     .joinToString(":") { byte -> "%02X".format(byte) }
                 if (!received.equals(expectedFingerprint, ignoreCase = true)) {
-                    throw CertificateException("The TV certificate changed after pairing.")
+                    throw TvCertificateChangedException()
                 }
             }
         }
 
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
+
+    private class TvCertificateChangedException : CertificateException("The TV certificate changed after pairing.")
 
     private class VoiceRequest(val socket: SSLSocket) {
         val sessionId = CompletableDeferred<Int>()

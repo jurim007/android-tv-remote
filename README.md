@@ -51,7 +51,7 @@ The TV displays a six-character pairing code. Enter the code currently shown on 
 | --- | --- |
 | **Button D-pad** | Tap an arrow to move once, or hold it to repeat. Tap **OK** to select. |
 | **Swipe pad** | Swipe to move, swipe and hold to repeat, or tap to select. |
-| **Type** | Focus a text field on the TV, open **Type** on your phone, enter text, and tap **Send**. Use the delete icon in the dialog to erase a character on the TV. |
+| **Type** | Focus a text field on the TV and open **Type** on your phone. **Send text** transfers text and keeps the dialog open. **Enter** sends any draft, runs the TV field’s action (such as Search or Done) when available, and closes the dialog. The delete icon erases a character on the TV. |
 | **Microphone** | Tap the mic between Back and Home, grant microphone access if prompted, and speak. TVControl sends the audio to the paired TV for processing. Tap **Stop** to finish. Recording also stops when you leave the remote or after 20 seconds. |
 | **Source** | Opens the TV’s native Inputs panel where supported. Navigate with the D-pad or swipe pad and select an input. See the [TCL setup](#source-on-tcl-tvs) if your TV ignores the standard Source key. |
 
@@ -73,7 +73,7 @@ Go to **Remote settings → Remote layout → TV app shortcuts**. YouTube, Netfl
 
 1. Tap **Add TV app** and start typing the app name. Select a suggestion to fill in the app name and package ID. For an app outside the catalog, enter the package ID for the version installed on your TV.
 2. Keep the automatically matched logo or provide your own with **Choose SVG** or an HTTPS link to an SVG.
-3. Tap **Add app**. Hold and drag a shortcut in the list to reorder it, or use **Edit** and **Remove**. **Restore default shortcuts** brings back the four bundled entries after confirmation.
+3. Tap **Add app**. Drag a shortcut’s handle to reorder it, or use **Edit** and **Remove**. **Restore default shortcuts** brings back the four bundled entries after confirmation.
 
 <p>
   <img src="docs/screenshots/manage-shortcuts.jpg" alt="Shortcut list with drag handles, Edit and Remove actions, and an Add TV app button" width="230">
@@ -97,7 +97,7 @@ On the tested **TCL 55P69K**, the firmware ignores the standard Source key over 
 | --- | --- |
 | TV is missing from **Nearby TVs** | Check that both devices are on the same local network. Guest Wi-Fi can block communication between devices. Try **Add by IP** if discovery is unavailable. |
 | Pairing code is rejected | Start pairing again and enter the new six-character code shown on the TV. |
-| Remote buttons don’t respond | Confirm the status dot is green and the correct TV is selected. If the TV’s network address changed and reconnecting fails, remove its saved entry and pair again. |
+| Remote buttons don’t respond | Confirm the status dot is green and the correct TV is selected. If the TV rejects its saved pairing, choose **Pair again** from the TV selector and enter the new code. If the TV’s address changed, pair using its new address. |
 | Text or backspace does nothing | Focus an editable field on the TV first. Text input support can vary by TV app. |
 | Mic is dimmed or missing | Check **Show microphone** under **Remote layout**, connect to a TV that advertises voice support, and allow TVControl to use the phone’s microphone. |
 

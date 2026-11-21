@@ -1,5 +1,6 @@
 package com.jurim007.androidtvremote.data.protocol
 
+import android.view.inputmethod.EditorInfo
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import java.security.MessageDigest
 import java.security.interfaces.RSAPublicKey
@@ -138,6 +139,7 @@ internal object TvRemoteProtocol {
             RemoteCommand.Mute -> 164
             RemoteCommand.Source -> 178
             RemoteCommand.Delete -> 67
+            is RemoteCommand.Enter -> 66
             is RemoteCommand.SendText,
             is RemoteCommand.LaunchApp,
             -> null
@@ -159,22 +161,37 @@ internal object TvRemoteProtocol {
         return ProtoWriter().bytes(90, request).build()
     }
 
-    fun textEdit(text: String, field: TvImeField?): ByteArray {
+    fun textEdit(text: String, field: TvImeField?): ByteArray = imeEdit(field, text)
+
+    fun confirmEditor(text: String, field: TvImeField?): ByteArray? {
+        val action = field?.editorAction ?: return null
+        return imeEdit(field, text.takeIf(String::isNotBlank), action)
+    }
+
+    private fun imeEdit(field: TvImeField?, text: String?, action: Int? = null): ByteArray {
         val batch = ProtoWriter()
         val start = field?.selectionStart ?: 0
         val end = field?.selectionEnd ?: 0
         if (field != null) {
-            val select = ProtoWriter().int(2, start.toLong()).int(3, end.toLong()).build()
             batch.int(1, field.id.toLong())
                 .int(2, field.counter.toLong())
-                .bytes(3, ProtoWriter().bytes(1, select).build())
         }
-        val replacement = ProtoWriter()
-            .int(1, start.toLong())
-            .int(2, end.toLong())
-            .string(3, text)
-            .build()
-        batch.bytes(3, ProtoWriter().bytes(2, replacement).build())
+        if (text != null) {
+            if (field != null) {
+                val selection = ProtoWriter().int(2, start.toLong()).int(3, end.toLong()).build()
+                batch.bytes(3, ProtoWriter().bytes(1, selection).build())
+            }
+            val replacement = ProtoWriter()
+                .int(1, start.toLong())
+                .int(2, end.toLong())
+                .string(3, text)
+                .build()
+            batch.bytes(3, ProtoWriter().bytes(2, replacement).build())
+        }
+        if (action != null) {
+            val confirm = ProtoWriter().int(1, action.toLong()).build()
+            batch.bytes(3, ProtoWriter().bytes(5, confirm).build())
+        }
         return ProtoWriter().bytes(21, batch.build()).build()
     }
 
@@ -183,9 +200,19 @@ internal object TvRemoteProtocol {
         val opened = fields.firstOrNull { it.number == 20 }?.bytes
         if (opened != null) {
             val editor = remoteField(opened, 1) ?: return null
-            val id = ProtoWire.parse(editor).intField(1)
+            val info = ProtoWire.parse(editor)
+            val id = info.intField(1)
             if (id == 0) return null
-            val initial = TvImeField(id)
+            val customAction = info.intField(6)
+            val options = info.intField(3)
+            val standardAction = options and EditorInfo.IME_MASK_ACTION
+            val action = when {
+                customAction != 0 -> customAction
+                options and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0 -> null
+                standardAction in EditorInfo.IME_ACTION_GO..EditorInfo.IME_ACTION_PREVIOUS -> standardAction
+                else -> null
+            }
+            val initial = TvImeField(id, editorAction = action)
             return remoteField(opened, 2)?.let(initial::withTextStatus) ?: initial
         }
         if (current == null || fields.any { it.number == 24 && it.bytes != null }) return null
@@ -245,6 +272,7 @@ internal data class TvImeField(
     val counter: Int = 0,
     val selectionStart: Int = 0,
     val selectionEnd: Int = 0,
+    val editorAction: Int? = null,
 ) {
     fun withTextStatus(status: ByteArray): TvImeField {
         val fields = ProtoWire.parse(status)

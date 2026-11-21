@@ -65,6 +65,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -240,6 +241,7 @@ fun RemoteScreen(
                     savedTvs = savedTvs,
                     connectionState = connectionState,
                     onSelectTv = viewModel::connect,
+                    onRepairTv = { connectionDialogMode = "repair" },
                     onAddTv = { connectionDialogMode = "add" },
                     onCommand = viewModel::send,
                     onOpenSettings = { settingsOpen = true },
@@ -327,6 +329,7 @@ fun RemoteScreen(
             discoveredDevices = discoveredDevices,
             connectionState = connectionState,
             manageOnly = mode == "manage",
+            repairDevice = selectedTv.takeIf { mode == "repair" },
             onStartDiscovery = viewModel::startDiscovery,
             onStopDiscovery = viewModel::stopDiscovery,
             onBeginPairing = viewModel::beginPairing,
@@ -350,6 +353,7 @@ private fun DeviceHeader(
     savedTvs: List<TvDevice>,
     connectionState: TvConnectionState,
     onSelectTv: (TvDevice) -> Unit,
+    onRepairTv: () -> Unit,
     onAddTv: () -> Unit,
     onCommand: (RemoteCommand) -> Unit,
     onOpenSettings: () -> Unit,
@@ -468,6 +472,15 @@ private fun DeviceHeader(
                             },
                         )
                     }
+                }
+                if (connectionState.needsPairing && connectionState.device?.id == selectedTv?.id) {
+                    DropdownMenuItem(
+                        text = { Text("Pair again") },
+                        onClick = {
+                            menuExpanded = false
+                            onRepairTv()
+                        },
+                    )
                 }
                 DropdownMenuItem(
                     text = { Icon(Icons.Filled.Add, contentDescription = "Add TV") },
@@ -1015,8 +1028,9 @@ private fun UtilityBar(
 
     if (typeDialogOpen) {
         TypeTextDialog(
-            onSend = { text ->
-                onCommand(RemoteCommand.SendText(text))
+            onSend = { text -> onCommand(RemoteCommand.SendText(text)) },
+            onEnter = { text ->
+                onCommand(RemoteCommand.Enter(text))
                 typeDialogOpen = false
             },
             onDelete = { onCommand(RemoteCommand.Delete) },
@@ -1072,11 +1086,18 @@ private fun UtilityDivider() {
 @Composable
 private fun TypeTextDialog(
     onSend: (String) -> Unit,
+    onEnter: (String) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val feedback = remoteClickFeedback()
     var value by rememberSaveable { mutableStateOf("") }
+    fun sendDraft() {
+        if (value.isNotBlank()) {
+            onSend(value)
+            value = ""
+        }
+    }
     val dialogShape = RoundedCornerShape(28.dp)
     AlertDialog(
         modifier = Modifier.border(
@@ -1090,51 +1111,60 @@ private fun TypeTextDialog(
         tonalElevation = 0.dp,
         title = { Text("Type to TV") },
         text = {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Text") },
-                trailingIcon = {
-                    IconButton(onClick = {
-                        feedback()
-                        onDelete()
-                    }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Backspace,
-                            contentDescription = "Delete character on TV",
-                        )
-                    }
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Send,
-                ),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (value.isNotBlank()) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Text") },
+                    trailingIcon = {
+                        IconButton(onClick = {
                             feedback()
-                            onSend(value)
+                            onDelete()
+                        }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Backspace,
+                                contentDescription = "Delete character on TV",
+                            )
                         }
                     },
-                ),
-            )
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Send,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (value.isNotBlank()) {
+                                feedback()
+                                sendDraft()
+                            }
+                        },
+                    ),
+                )
+                OutlinedButton(
+                    onClick = {
+                        feedback()
+                        sendDraft()
+                    },
+                    enabled = value.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Send text")
+                }
+            }
         },
         confirmButton = {
-            TextButton(
-                onClick = {
-                    feedback()
-                    onSend(value)
-                },
-                enabled = value.isNotBlank(),
-            ) {
-                Text("Send")
+            TextButton(onClick = {
+                feedback()
+                onEnter(value)
+            }) {
+                Text("Enter")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text("Close")
             }
         },
     )

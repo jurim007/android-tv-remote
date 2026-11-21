@@ -16,6 +16,7 @@ sealed interface RemoteCommand {
     data object Mute : RemoteCommand
     data object Source : RemoteCommand
     data object Delete : RemoteCommand
+    data class Enter(val text: String = "") : RemoteCommand
     data class SendText(val text: String) : RemoteCommand
     data class LaunchApp(
         val packageName: String,

@@ -5,9 +5,15 @@ import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +72,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
@@ -75,6 +83,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -84,7 +93,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
@@ -227,7 +238,7 @@ fun RemoteSettingsDialog(
                     )
                 } else {
                     if (shortcuts.size > 1) {
-                        Text("Hold and drag to reorder.", color = RemoteMuted,
+                        Text("Drag the handles to reorder.", color = RemoteMuted,
                             style = MaterialTheme.typography.bodySmall)
                     }
                     ReorderableShortcuts(
@@ -783,12 +794,18 @@ private fun ReorderableShortcuts(
     onRemove: (TvAppShortcut) -> Unit,
 ) {
     val currentOnReorder by rememberUpdatedState(onReorder)
-    val rowHeight = with(LocalDensity.current) { ShortcutRowHeight.roundToPx().toFloat() }
-    val edgeSize = with(LocalDensity.current) { 44.dp.toPx() }
+    val density = LocalDensity.current
+    val rowHeight = with(density) { ShortcutRowHeight.roundToPx().toFloat() }
+    val edgeSize = with(density) { 48.dp.toPx() }
+    val handleWidth = with(density) { ShortcutHandleWidth.toPx() }
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var listTop by remember { mutableStateOf(0f) }
-    var drag by remember(shortcuts) { mutableStateOf<ShortcutDrag?>(null) }
-    val target = drag?.let { (it.origin + (it.distance / rowHeight).roundToInt()).coerceIn(shortcuts.indices) }
-    val displayed = drag?.let { shortcuts.moveShortcut(it.origin, checkNotNull(target)) } ?: shortcuts
+    var pendingOrder by remember(shortcuts) { mutableStateOf<List<TvAppShortcut>?>(null) }
+    val order = pendingOrder ?: shortcuts
+    var drag by remember(order) { mutableStateOf<ShortcutDrag?>(null) }
+    val draggedTop = drag?.top(rowHeight, scrollState.value, order.lastIndex)
+    val target = draggedTop?.let { (it / rowHeight).roundToInt() }
+    val projectedOrder = drag?.let { order.moveShortcut(it.origin, checkNotNull(target)) } ?: order
     val direction = drag?.let {
         when {
             it.pointerY < viewport.top + edgeSize -> -1
@@ -796,13 +813,10 @@ private fun ReorderableShortcuts(
             else -> 0
         }
     } ?: 0
+
     LaunchedEffect(direction, scrollState) {
         if (direction == 0) return@LaunchedEffect
-        while (true) {
-            val scrolled = scrollState.scrollBy(direction * edgeSize / 5)
-            val active = drag ?: break
-            if (scrolled == 0f) break
-            drag = active.copy(distance = active.distance + scrolled)
+        while (drag != null && scrollState.scrollBy(direction * edgeSize / 8) != 0f) {
             delay(16)
         }
     }
@@ -811,48 +825,76 @@ private fun ReorderableShortcuts(
         Modifier
             .fillMaxWidth()
             .onGloballyPositioned { listTop = it.positionInRoot().y }
-            .pointerInput(shortcuts, rowHeight) {
-                if (shortcuts.size < 2) return@pointerInput
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { position ->
-                        val index = (position.y / rowHeight).toInt().coerceIn(shortcuts.indices)
-                        drag = ShortcutDrag(index, 0f, position.y + listTop)
-                    },
-                    onDrag = { change, amount ->
-                        drag = drag?.let {
-                            it.copy(distance = it.distance + amount.y, pointerY = change.position.y + listTop)
+            .pointerInput(order, rowHeight, handleWidth, rtl) {
+                if (order.size < 2) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val distanceFromStart = if (rtl) size.width - down.position.x else down.position.x
+                    if (distanceFromStart !in 0f..handleWidth) return@awaitEachGesture
+                    val origin = (down.position.y / rowHeight).toInt()
+                    if (origin !in order.indices) return@awaitEachGesture
+                    val startY = down.position.y + listTop
+                    val startScroll = scrollState.value
+                    val firstDrag = awaitVerticalTouchSlopOrCancellation(down.id) { change, _ ->
+                        change.consume()
+                    } ?: return@awaitEachGesture
+                    var active = ShortcutDrag(origin, startY, firstDrag.position.y + listTop, startScroll)
+                    drag = active
+                    try {
+                        val dropped = verticalDrag(firstDrag.id) { change ->
+                            active = active.copy(pointerY = change.position.y + listTop)
+                            drag = active
+                            change.consume()
                         }
-                    },
-                    onDragCancel = { drag = null },
-                    onDragEnd = {
-                        drag?.let {
-                            val destination = (it.origin + (it.distance / rowHeight).roundToInt())
-                                .coerceIn(shortcuts.indices)
-                            if (destination != it.origin) {
-                                currentOnReorder(shortcuts.moveShortcut(it.origin, destination))
+                        if (dropped) {
+                            val destination = (active.top(rowHeight, scrollState.value, order.lastIndex) / rowHeight)
+                                .roundToInt()
+                            if (destination != origin) {
+                                val reordered = order.moveShortcut(origin, destination)
+                                pendingOrder = reordered
+                                currentOnReorder(reordered)
                             }
                         }
+                    } finally {
                         drag = null
-                    },
-                )
+                    }
+                }
             },
     ) {
-        displayed.forEachIndexed { index, shortcut ->
+        order.forEachIndexed { index, shortcut ->
             key(shortcut.packageName) {
-                val moveActions = buildList {
+                val liftedTop = draggedTop.takeIf { drag?.origin == index }
+                val isDragged = liftedTop != null
+                val destination = projectedOrder.indexOf(shortcut) * rowHeight
+                val rowTop by animateFloatAsState(
+                    targetValue = liftedTop ?: destination,
+                    animationSpec = if (isDragged) snap() else spring(dampingRatio = 0.86f, stiffness = 500f),
+                    label = "shortcut position",
+                )
+                val moveActions = if (drag != null) emptyList() else buildList {
                     if (index > 0) add(CustomAccessibilityAction("Move up") {
-                        onReorder(shortcuts.moveShortcut(index, index - 1))
+                        val reordered = order.moveShortcut(index, index - 1)
+                        pendingOrder = reordered
+                        onReorder(reordered)
                         true
                     })
-                    if (index < displayed.lastIndex) add(CustomAccessibilityAction("Move down") {
-                        onReorder(shortcuts.moveShortcut(index, index + 1))
+                    if (index < order.lastIndex) add(CustomAccessibilityAction("Move down") {
+                        val reordered = order.moveShortcut(index, index + 1)
+                        pendingOrder = reordered
+                        onReorder(reordered)
                         true
                     })
                 }
                 ShortcutSettingsRow(
                     shortcut = shortcut,
+                    canReorder = order.size > 1,
                     modifier = Modifier
-                        .background(if (index == target) RemoteSurface else Color.Transparent)
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .graphicsLayer {
+                            translationY = (liftedTop ?: rowTop) - index * rowHeight
+                        }
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isDragged) RemoteSurface else Color.Transparent)
                         .semantics { customActions = moveActions },
                     onEdit = { onEdit(shortcut) },
                     onRemove = { onRemove(shortcut) },
@@ -862,16 +904,26 @@ private fun ReorderableShortcuts(
     }
 }
 
-private data class ShortcutDrag(val origin: Int, val distance: Float, val pointerY: Float)
+private data class ShortcutDrag(
+    val origin: Int,
+    val startY: Float,
+    val pointerY: Float,
+    val startScroll: Int,
+) {
+    fun top(rowHeight: Float, scroll: Int, lastIndex: Int): Float =
+        (origin * rowHeight + pointerY - startY + scroll - startScroll).coerceIn(0f, lastIndex * rowHeight)
+}
 
 private fun List<TvAppShortcut>.moveShortcut(from: Int, to: Int): List<TvAppShortcut> =
     toMutableList().apply { add(to, removeAt(from)) }
 
 private val ShortcutRowHeight = 58.dp
+private val ShortcutHandleWidth = 44.dp
 
 @Composable
 private fun ShortcutSettingsRow(
     shortcut: TvAppShortcut,
+    canReorder: Boolean,
     modifier: Modifier,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -882,8 +934,16 @@ private fun ShortcutSettingsRow(
             .height(ShortcutRowHeight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.DragHandle, contentDescription = null, tint = RemoteMuted,
-            modifier = Modifier.size(22.dp))
+        if (canReorder) {
+            Box(Modifier.width(ShortcutHandleWidth), contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Filled.DragHandle,
+                    contentDescription = null,
+                    tint = RemoteMuted,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
         ShortcutIcon(shortcut, Modifier.size(36.dp))
         Column(
             modifier = Modifier

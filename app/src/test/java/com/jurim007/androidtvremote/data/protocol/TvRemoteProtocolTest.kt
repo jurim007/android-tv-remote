@@ -9,6 +9,7 @@ import java.security.MessageDigest
 import java.security.interfaces.RSAPublicKey
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -104,6 +105,35 @@ class TvRemoteProtocolTest {
             byteArrayOf(0x52, 0x04, 0x08, 67, 0x10, 0x03),
             TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_SHORT),
         )
+    }
+
+    @Test
+    fun enterInjectsAndroidEnterKey() {
+        val keyCode = checkNotNull(TvRemoteProtocol.keyCode(RemoteCommand.Enter()))
+        assertArrayEquals(
+            byteArrayOf(0x52, 0x04, 0x08, 66, 0x10, 0x03),
+            TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_SHORT),
+        )
+    }
+
+    @Test
+    fun enterUsesTheFocusedEditorsActionAndKeepsTheDraftInTheSameBatch() {
+        val editor = ProtoWriter().int(1, 42).int(3, 0x1c000005).build()
+        val opened = ProtoWriter().bytes(20, ProtoWriter().bytes(1, editor).build()).build()
+        val field = TvRemoteProtocol.updateImeField(opened, null)
+        assertEquals(5, field?.editorAction)
+
+        val message = checkNotNull(TvRemoteProtocol.confirmEditor("A", field))
+        val batch = ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(message, 21)))
+        assertEquals(42L, batch.first { it.number == 1 }.varint)
+        val edits = batch.filter { it.number == 3 }.map { ProtoWire.parse(checkNotNull(it.bytes)).single() }
+        assertEquals(listOf(1, 2, 5), edits.map { it.number })
+        assertArrayEquals(byteArrayOf(8, 5), edits.last().bytes)
+
+        val withoutDraft = checkNotNull(TvRemoteProtocol.confirmEditor("", field))
+        assertEquals(1, ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(withoutDraft, 21)))
+            .count { it.number == 3 })
+        assertNull(TvRemoteProtocol.confirmEditor("", TvImeField(42)))
     }
 
     @Test

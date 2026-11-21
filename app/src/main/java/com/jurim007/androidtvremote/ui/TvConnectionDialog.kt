@@ -50,6 +50,7 @@ fun TvConnectionDialog(
     discoveredDevices: List<TvDevice>,
     connectionState: TvConnectionState,
     manageOnly: Boolean,
+    repairDevice: TvDevice?,
     onStartDiscovery: () -> Unit,
     onStopDiscovery: () -> Unit,
     onBeginPairing: (TvDevice) -> Unit,
@@ -59,14 +60,19 @@ fun TvConnectionDialog(
     onCancelPairing: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var pendingName by rememberSaveable { mutableStateOf("") }
+    var pendingName by rememberSaveable { mutableStateOf(repairDevice?.name.orEmpty()) }
     var pin by rememberSaveable { mutableStateOf("") }
     var manualHost by rememberSaveable { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
     var pairingStarted by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(manageOnly) {
-        if (!manageOnly) onStartDiscovery()
+    LaunchedEffect(manageOnly, repairDevice?.id) {
+        if (repairDevice != null && !pairingStarted) {
+            pairingStarted = true
+            onBeginPairing(repairDevice)
+        } else if (repairDevice == null && !manageOnly) {
+            onStartDiscovery()
+        }
     }
     Dialog(
         onDismissRequest = {
@@ -179,6 +185,12 @@ fun TvConnectionDialog(
                         color = Color(0xFFFF9A9A),
                     )
                     Spacer(Modifier.height(8.dp))
+                    if (repairDevice != null) {
+                        TextButton(onClick = {
+                            pin = ""
+                            onBeginPairing(repairDevice)
+                        }) { Text("Retry pairing") }
+                    }
                 }
                 Text("Nearby TVs", color = RemoteMuted)
                 if (discoveredDevices.isEmpty()) {
