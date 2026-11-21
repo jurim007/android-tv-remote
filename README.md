@@ -47,3 +47,8 @@ The CloudStream SVG was supplied by the user. Other wordmarks are from Wikimedia
 
 Build the debug APK with `./gradlew assembleDebug`. Pairing and command behavior should
 be verified against the target TV; TV models may advertise different capabilities.
+
+Remote settings shows the APK's version and GitHub author. A tagged GitHub Actions build
+uses its release tag and repository owner. Local builds use the nearest reachable version
+tag and the owner in the GitHub `origin` URL. Source archives without tags use the base
+version. To build with a specific release version, pass `-PreleaseVersion=1.2.3`.

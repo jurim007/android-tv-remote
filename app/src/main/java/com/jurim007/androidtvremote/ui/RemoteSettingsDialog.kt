@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
+import com.jurim007.androidtvremote.BuildConfig
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
@@ -284,6 +285,12 @@ fun RemoteSettingsDialog(
                         enabled = RemoteOption.VIBRATION in options,
                     ) { onOptionChange(RemoteOption.VIBRATION, it) }
                 }
+                SettingsSection("About") {
+                    AboutRow("Version", BuildConfig.VERSION_NAME)
+                    if (BuildConfig.GITHUB_AUTHOR.isNotEmpty()) {
+                        AboutRow("Author", "@${BuildConfig.GITHUB_AUTHOR}")
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -398,6 +405,17 @@ private fun SettingsSection(title: String, content: @Composable () -> Unit) {
     content()
     HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
     Spacer(Modifier.height(14.dp))
+}
+
+@Composable
+private fun AboutRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = RemoteMuted, style = MaterialTheme.typography.bodyMedium)
+        Text(value, color = RemoteText, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 @Composable

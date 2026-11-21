@@ -479,7 +479,13 @@ private fun AppShortcutsGrid(
                     ) {
                         ShortcutIcon(
                             shortcut = shortcut,
-                            modifier = Modifier.size(width = 42.dp, height = 25.dp),
+                            modifier = if (shortcut.packageName == "com.amazon.amazonvideo.livingroom" &&
+                                shortcut.iconUri == null
+                            ) {
+                                Modifier.size(width = 50.dp, height = 28.dp)
+                            } else {
+                                Modifier.size(width = 42.dp, height = 25.dp)
+                            },
                         )
                     }
                 }
