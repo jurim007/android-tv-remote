@@ -259,18 +259,16 @@ fun RemoteScreen(
                     touchpadEnabled = touchpadEnabled,
                     showVolume = RemoteOption.VOLUME in options,
                     showChannel = RemoteOption.CHANNEL in options,
+                    showMicrophone = showMicrophone,
+                    canUseMicrophone = canUseMicrophone,
                     voiceState = voiceState,
-                    onMicrophoneClick = if (showMicrophone && canUseMicrophone) {
-                        {
-                            when {
-                                voiceState != VoiceState.IDLE -> viewModel.stopVoice()
-                                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                    PackageManager.PERMISSION_GRANTED -> viewModel.startVoice()
-                                else -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                            }
+                    onMicrophoneClick = {
+                        when {
+                            voiceState != VoiceState.IDLE -> viewModel.stopVoice()
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED -> viewModel.startVoice()
+                            else -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                    } else {
-                        null
                     },
                     sideWidth = sideWidth,
                     dpadHeight = dpadHeight,
@@ -542,8 +540,10 @@ private fun RemoteControls(
     touchpadEnabled: Boolean,
     showVolume: Boolean,
     showChannel: Boolean,
+    showMicrophone: Boolean,
+    canUseMicrophone: Boolean,
     voiceState: VoiceState,
-    onMicrophoneClick: (() -> Unit)?,
+    onMicrophoneClick: () -> Unit,
     sideWidth: androidx.compose.ui.unit.Dp,
     dpadHeight: androidx.compose.ui.unit.Dp,
     bottomButtonSize: androidx.compose.ui.unit.Dp,
@@ -618,16 +618,18 @@ private fun RemoteControls(
                     modifier = Modifier.size(34.dp),
                 )
             }
-            if (onMicrophoneClick != null) {
-                val active = voiceState != VoiceState.IDLE
+            if (showMicrophone) {
+                val active = canUseMicrophone && voiceState != VoiceState.IDLE
                 RemoteTapTarget(
-                    description = when (voiceState) {
-                        VoiceState.IDLE -> "Start voice search"
-                        VoiceState.STARTING -> "Cancel voice search"
-                        VoiceState.LISTENING -> "Stop listening"
-                        VoiceState.FINISHING -> "Finishing voice search"
+                    description = when {
+                        !canUseMicrophone -> "Voice search unavailable"
+                        voiceState == VoiceState.STARTING -> "Cancel voice search"
+                        voiceState == VoiceState.LISTENING -> "Stop listening"
+                        voiceState == VoiceState.FINISHING -> "Finishing voice search"
+                        else -> "Start voice search"
                     },
                     onClick = onMicrophoneClick,
+                    enabled = canUseMicrophone,
                     modifier = Modifier.size(bottomButtonSize),
                     shape = CircleShape,
                     background = surfaceBrush(),
@@ -636,7 +638,11 @@ private fun RemoteControls(
                     Icon(
                         imageVector = if (active) Icons.Filled.Stop else Icons.Filled.Mic,
                         contentDescription = null,
-                        tint = if (active) RemoteAccent else RemoteText,
+                        tint = when {
+                            active -> RemoteAccent
+                            canUseMicrophone -> RemoteText
+                            else -> RemoteMuted
+                        },
                         modifier = Modifier.size(34.dp),
                     )
                 }
@@ -1219,6 +1225,7 @@ private fun RemoteTapTarget(
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(24.dp),
     background: Brush,
     border: Color,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val feedback = remoteClickFeedback()
@@ -1238,6 +1245,7 @@ private fun RemoteTapTarget(
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
+                enabled = enabled,
                 role = Role.Button,
                 onClickLabel = description,
                 onClick = {
