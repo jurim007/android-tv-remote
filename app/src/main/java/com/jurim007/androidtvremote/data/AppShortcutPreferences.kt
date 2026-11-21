@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
+import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -18,7 +19,7 @@ class AppShortcutPreferences(context: Context) {
     private val dataStore = context.preferencesDataStore
 
     val shortcuts: Flow<List<TvAppShortcut>> = dataStore.data.map { preferences ->
-        preferences[TV_APP_SHORTCUTS]?.let(::decodeShortcuts).orEmpty().take(MAX_SHORTCUTS)
+        (preferences[TV_APP_SHORTCUTS]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_SHORTCUTS)
     }
 
     val touchpadEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
@@ -94,8 +95,7 @@ class AppShortcutPreferences(context: Context) {
                         JSONObject()
                             .put("name", shortcut.name)
                             .put("packageName", shortcut.packageName)
-                            .put("iconUri", shortcut.iconUri)
-                            .put("launchUri", shortcut.launchUri),
+                            .put("iconUri", shortcut.iconUri),
                     )
                 }
             }.toString()
@@ -108,9 +108,6 @@ class AppShortcutPreferences(context: Context) {
                     name = item.getString("name"),
                     packageName = item.getString("packageName"),
                     iconUri = item.optString("iconUri").takeIf(String::isNotBlank),
-                    launchUri = item.takeIf { !it.isNull("launchUri") }
-                        ?.optString("launchUri")
-                        ?.takeIf(String::isNotBlank),
                 )
             }
         }

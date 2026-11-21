@@ -514,6 +514,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 val keyCode = TvRemoteProtocol.keyCode(command) ?: return
                 if (!supportsCommand(command)) {
                     emitMessage("This TV does not support that remote command.")
+                } else if (command == RemoteCommand.Source) {
+                    writeMessage(socket, TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_START_LONG))
+                    writeMessage(socket, TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_END_LONG))
                 } else {
                     writeMessage(
                         socket,
@@ -546,8 +549,17 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 if (response != null) {
                     writeMessage(socket, response)
                 } else if (TvRemoteProtocol.hasRemoteError(message)) {
-                    Log.w(TAG, "The TV reported a remote protocol error")
-                    emitMessage("The TV reported that a remote command could not be handled.")
+                    val rejected = TvRemoteProtocol.rejectedRemoteCommand(message)
+                    val appLink = rejected?.let { TvRemoteProtocol.remoteField(it, 90) }
+                    val uri = appLink?.let { TvRemoteProtocol.remoteField(it, 1)?.toString(Charsets.UTF_8) }
+                    val feedback = when {
+                        uri?.startsWith("market://launch?id=") == true ->
+                            "The TV rejected this package launch. Set up a package-launch handler such as AVA Connect on the TV."
+                        appLink != null -> "The TV rejected this app shortcut."
+                        else -> "The TV reported that a remote command could not be handled."
+                    }
+                    Log.w(TAG, feedback)
+                    emitMessage(feedback)
                 } else {
                     val (newImeCounter, newFieldCounter) = TvRemoteProtocol.imeCounters(message)
                     synchronized(connectionLock) {

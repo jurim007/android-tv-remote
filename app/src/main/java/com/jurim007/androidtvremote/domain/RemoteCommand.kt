@@ -15,14 +15,10 @@ sealed interface RemoteCommand {
     data object ChannelDown : RemoteCommand
     data object Mute : RemoteCommand
     data object Source : RemoteCommand
-    enum class Hdmi(val port: Int) : RemoteCommand {
-        HDMI_1(1), HDMI_2(2), HDMI_3(3), HDMI_4(4),
-    }
     data object Delete : RemoteCommand
     data class SendText(val text: String) : RemoteCommand
     data class LaunchApp(
         val packageName: String,
-        val launchUri: String?,
     ) : RemoteCommand
 }
 

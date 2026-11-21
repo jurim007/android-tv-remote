@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -137,12 +138,16 @@ fun TvConnectionDialog(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = pin,
-                        onValueChange = { pin = it.filter(Char::isLetterOrDigit).take(6) },
+                        onValueChange = { entered ->
+                            pin = entered.uppercase().filter { it in "0123456789ABCDEF" }.take(6)
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("TV pairing code") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Ascii,
+                            capitalization = KeyboardCapitalization.Characters,
+                            autoCorrectEnabled = false,
                             imeAction = ImeAction.Done,
                         ),
                     )

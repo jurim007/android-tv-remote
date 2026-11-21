@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -102,6 +101,7 @@ import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.domain.TvDevice
+import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -119,7 +119,7 @@ fun RemoteScreen(
 ) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var connectionDialogMode by rememberSaveable { mutableStateOf<String?>(null) }
-    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = emptyList())
+    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = defaultTvShortcuts)
     val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedTvs by viewModel.savedTvs.collectAsStateWithLifecycle()
     val selectedTvId by viewModel.selectedTvId.collectAsStateWithLifecycle()
@@ -212,10 +212,7 @@ fun RemoteScreen(
                 shortcuts = shortcuts,
                 onLaunchApp = { shortcut ->
                     viewModel.send(
-                        RemoteCommand.LaunchApp(
-                            packageName = shortcut.packageName,
-                            launchUri = shortcut.launchUri,
-                        ),
+                        RemoteCommand.LaunchApp(shortcut.packageName),
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -452,44 +449,24 @@ private fun AppShortcutsRow(
     onLaunchApp: (TvAppShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (shortcuts.isEmpty()) {
-        Box(
-            modifier = modifier.height(82.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(
-                text = "Add TV app shortcuts in Settings",
-                color = RemoteMuted,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-    } else {
-        Row(
-            modifier = modifier.height(82.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            shortcuts.take(4).forEach { shortcut ->
-                RemoteTapTarget(
-                    description = shortcut.name,
-                    onClick = { onLaunchApp(shortcut) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .aspectRatio(1f),
-                    shape = RoundedCornerShape(19.dp),
-                    background = surfaceBrush(),
-                    border = RemoteBorder.copy(alpha = 0.78f),
-                ) {
-                    ShortcutIcon(
-                        shortcut = shortcut,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(8.dp),
-                    )
-                }
-            }
-            repeat((4 - shortcuts.size).coerceAtLeast(0)) {
-                Spacer(Modifier.weight(1f))
+    Row(
+        modifier = modifier.height(70.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        shortcuts.forEach { shortcut ->
+            RemoteTapTarget(
+                description = shortcut.name,
+                onClick = { onLaunchApp(shortcut) },
+                modifier = Modifier.weight(1f).height(56.dp),
+                shape = CircleShape,
+                background = surfaceBrush(),
+                border = RemoteBorder.copy(alpha = 0.78f),
+            ) {
+                ShortcutIcon(
+                    shortcut = shortcut,
+                    modifier = Modifier.size(width = 42.dp, height = 25.dp),
+                )
             }
         }
     }
@@ -843,7 +820,6 @@ private fun UtilityBar(
     modifier: Modifier = Modifier,
 ) {
     var typeDialogOpen by remember { mutableStateOf(false) }
-    var sourceMenuOpen by remember { mutableStateOf(false) }
 
     Row(
         modifier = modifier
@@ -866,41 +842,18 @@ private fun UtilityBar(
             )
         }
         UtilityDivider()
-        Box(Modifier.weight(1.2f).fillMaxHeight()) {
-            UtilityAction(
-                description = "Source",
-                onClick = { sourceMenuOpen = true },
-                modifier = Modifier.fillMaxWidth(),
-                label = "Source",
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Input,
-                    contentDescription = null,
-                    tint = RemoteText,
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-            DropdownMenu(
-                expanded = sourceMenuOpen,
-                onDismissRequest = { sourceMenuOpen = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Open TV input menu") },
-                    onClick = {
-                        sourceMenuOpen = false
-                        onCommand(RemoteCommand.Source)
-                    },
-                )
-                RemoteCommand.Hdmi.entries.forEach { input ->
-                    DropdownMenuItem(
-                        text = { Text("HDMI ${input.port}") },
-                        onClick = {
-                            sourceMenuOpen = false
-                            onCommand(input)
-                        },
-                    )
-                }
-            }
+        UtilityAction(
+            description = "Source",
+            onClick = { onCommand(RemoteCommand.Source) },
+            modifier = Modifier.weight(1.2f),
+            label = "Source",
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.Input,
+                contentDescription = null,
+                tint = RemoteText,
+                modifier = Modifier.size(28.dp),
+            )
         }
         UtilityDivider()
         UtilityAction(

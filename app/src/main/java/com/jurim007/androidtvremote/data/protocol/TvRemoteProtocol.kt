@@ -83,6 +83,9 @@ internal object TvRemoteProtocol {
     fun hasRemoteError(message: ByteArray): Boolean =
         ProtoWire.parse(message).any { it.number == 3 && it.wireType == 2 }
 
+    fun rejectedRemoteCommand(message: ByteArray): ByteArray? =
+        remoteField(message, 3)?.let { remoteField(it, 2) }
+
     fun pingResponse(message: ByteArray): ByteArray? {
         val ping = remoteField(message, 8) ?: return null
         val sequence = ProtoWire.parse(ping).firstOrNull { it.number == 1 }?.varint ?: 0L
@@ -114,7 +117,6 @@ internal object TvRemoteProtocol {
             RemoteCommand.ChannelDown -> 167
             RemoteCommand.Mute -> 164
             RemoteCommand.Source -> 178
-            is RemoteCommand.Hdmi -> 242 + command.port
             RemoteCommand.Delete -> 67
             is RemoteCommand.SendText,
             is RemoteCommand.LaunchApp,
@@ -122,8 +124,17 @@ internal object TvRemoteProtocol {
         }
 
     fun launchApp(command: RemoteCommand.LaunchApp): ByteArray {
-        val uri = command.launchUri?.trim()?.takeIf(String::isNotEmpty)
-            ?: "market://launch?id=${command.packageName.trim()}"
+        val packageName = command.packageName.trim()
+        val uri = when (packageName) {
+            "com.google.android.youtube.tv" -> "https://www.youtube.com"
+            "com.lagradost.cloudstream3",
+            "com.lagradost.cloudstream3.prerelease",
+            -> "cloudstreamapp://open"
+            "com.netflix.ninja" -> "netflix://"
+            "com.amazon.amazonvideo.livingroom" -> "https://app.primevideo.com"
+            "com.disney.disneyplus" -> "https://www.disneyplus.com"
+            else -> "market://launch?id=$packageName"
+        }
         val request = ProtoWriter().string(1, uri).build()
         return ProtoWriter().bytes(90, request).build()
     }

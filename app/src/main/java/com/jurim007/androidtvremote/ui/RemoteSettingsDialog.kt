@@ -1,7 +1,6 @@
 package com.jurim007.androidtvremote.ui
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -57,6 +56,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.jurim007.androidtvremote.domain.TvAppShortcut
+import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.data.ShortcutImageDownloader
@@ -176,7 +176,7 @@ fun RemoteSettingsDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Add up to four TV apps by package ID. If your TV ignores the package ID, you can set a TV app launch URI.",
+                    text = "Add up to four TV apps by package ID. Custom icons use SVG files or HTTPS SVG links.",
                     color = RemoteMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -207,6 +207,11 @@ fun RemoteSettingsDialog(
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Text(if (shortcuts.size < MAX_SHORTCUTS) "Add TV app" else "Four app limit reached")
                 }
+                if (shortcuts != defaultTvShortcuts) {
+                    TextButton(onClick = { onShortcutsChange(defaultTvShortcuts) }) {
+                        Text("Restore default shortcuts")
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 TextButton(
                     onClick = onDismiss,
@@ -234,9 +239,6 @@ private fun AddTvAppForm(
         mutableStateOf(initialShortcut?.packageName.orEmpty())
     }
     var imageUrl by rememberSaveable(initialShortcut?.packageName) { mutableStateOf("") }
-    var launchUri by rememberSaveable(initialShortcut?.packageName) {
-        mutableStateOf(initialShortcut?.launchUri.orEmpty())
-    }
     var iconUri by rememberSaveable(initialShortcut?.packageName) {
         mutableStateOf(initialShortcut?.iconUri)
     }
@@ -264,7 +266,7 @@ private fun AddTvAppForm(
             }
         }
     }
-    val iconBitmap by rememberShortcutIconBitmap(iconUri)
+    val iconBitmap by rememberShortcutIconBitmap(iconUri, packageName.trim())
     val selectedIconBitmap = iconBitmap
 
     OutlinedTextField(
@@ -290,19 +292,6 @@ private fun AddTvAppForm(
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
-        value = launchUri,
-        onValueChange = { launchUri = it; validationMessage = null },
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text("TV app launch URI (optional)") },
-        placeholder = { Text("app://your-tv-app") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Uri,
-            imeAction = ImeAction.Next,
-        ),
-    )
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
         value = imageUrl,
         onValueChange = {
             imageUrl = it
@@ -310,8 +299,8 @@ private fun AddTvAppForm(
             validationMessage = null
         },
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("HTTPS icon image link (optional)") },
-        placeholder = { Text("https://example.com/icon.png") },
+        label = { Text("HTTPS SVG icon link (optional)") },
+        placeholder = { Text("https://example.com/icon.svg") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri,
@@ -337,25 +326,26 @@ private fun AddTvAppForm(
                 Image(
                     bitmap = selectedIconBitmap,
                     contentDescription = "Selected app icon",
+                    colorFilter = ColorFilter.tint(RemoteText),
                     modifier = Modifier
                         .size(46.dp)
                         .padding(3.dp),
                 )
             }
         }
-        OutlinedButton(onClick = { imagePicker.launch(arrayOf("image/*")) }) {
-            Text(if (iconUri == null) "Choose icon" else "Change icon")
+        OutlinedButton(onClick = { imagePicker.launch(arrayOf("image/svg+xml", "application/xml", "text/xml")) }) {
+            Text(if (iconUri == null) "Choose SVG" else "Change SVG")
         }
     }
     if (iconLoadError) {
         Text(
-            text = "Could not copy that image. Please choose another one.",
+            text = "Could not load that SVG. Choose a valid SVG file.",
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall,
         )
     }
     Text(
-        text = "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Choose an icon image by link or upload.",
+        text = "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Use an HTTPS SVG link or choose an SVG file.",
         color = RemoteMuted,
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = 8.dp),
@@ -397,9 +387,7 @@ private fun AddTvAppForm(
                     } ->
                         validationMessage = "That package ID is already in your shortcuts."
                     normalizedImageUrl != null && !imageUrlIsHttps ->
-                        validationMessage = "Use a complete HTTPS link to an image."
-                    launchUri.isNotBlank() && launchUri.toUri().scheme.isNullOrBlank() ->
-                        validationMessage = "Enter a valid app launch URI, or leave it blank."
+                        validationMessage = "Use a complete HTTPS link to an SVG."
                     normalizedImageUrl != null -> scope.launch {
                         processingImage = true
                         validationMessage = null
@@ -411,12 +399,11 @@ private fun AddTvAppForm(
                                     name = name.trim(),
                                     packageName = normalizedPackage,
                                     iconUri = downloadedImage,
-                                    launchUri = launchUri.trim().takeIf(String::isNotEmpty),
                                 ),
                             )
                         } catch (_: IOException) {
                             validationMessage =
-                                "Couldn't download that image. Check the HTTPS link and try again."
+                                "Couldn't load a valid SVG from that HTTPS link."
                         } finally {
                             processingImage = false
                         }
@@ -426,7 +413,6 @@ private fun AddTvAppForm(
                             name = name.trim(),
                             packageName = normalizedPackage,
                             iconUri = imageUri,
-                            launchUri = launchUri.trim().takeIf(String::isNotEmpty),
                         ),
                     )
                 }
@@ -486,23 +472,16 @@ fun ShortcutIcon(
     shortcut: TvAppShortcut,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val bitmap by rememberShortcutIconBitmap(shortcut.iconUri)
-    val loadedBitmap = bitmap
-    if (loadedBitmap == null) {
-        Box(
-            modifier = modifier
-                .background(RemoteSurface, CircleShape)
-                .border(1.dp, RemoteBorder, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Tv, contentDescription = null, tint = RemoteText)
-        }
+    val bitmap by rememberShortcutIconBitmap(shortcut.iconUri, shortcut.packageName)
+    val icon = bitmap
+    if (icon == null) {
+        Icon(Icons.Filled.Tv, contentDescription = null, modifier = modifier, tint = RemoteText)
     } else {
         Image(
-            bitmap = loadedBitmap,
-            contentDescription = shortcut.name,
+            bitmap = icon,
+            contentDescription = null,
             modifier = modifier,
+            colorFilter = ColorFilter.tint(RemoteText),
         )
     }
 }
@@ -511,41 +490,30 @@ private const val MAX_SHORTCUTS = 4
 private val PACKAGE_ID = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
 
 @Composable
-private fun rememberShortcutIconBitmap(iconUri: String?): State<ImageBitmap?> {
+private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String): State<ImageBitmap?> {
     val context = LocalContext.current
-    return produceState<ImageBitmap?>(initialValue = null, iconUri, context) {
-        value = iconUri?.let { uri ->
-            withContext(Dispatchers.IO) {
-                loadIconBitmap(context, uri)
+    return produceState<ImageBitmap?>(initialValue = null, iconUri, packageName, context) {
+        value = withContext(Dispatchers.IO) {
+            val customIcon = iconUri?.let { uri -> loadIconBitmap { openIconStream(context, uri.toUri()) } }
+            val asset = when (packageName) {
+                "com.google.android.youtube.tv" -> "youtube.svg"
+                "com.netflix.ninja" -> "netflix.svg"
+                "com.amazon.amazonvideo.livingroom" -> "primevideo.svg"
+                "com.disney.disneyplus" -> "disneyplus.svg"
+                else -> null
             }
+            customIcon ?: asset?.let { loadIconBitmap { context.assets.open("shortcut-icons/$it") } }
         }
     }
 }
 
-private fun loadIconBitmap(context: Context, uriString: String): ImageBitmap? =
+private fun loadIconBitmap(openStream: () -> java.io.InputStream?): ImageBitmap? =
     try {
-        val uri = uriString.toUri()
-        val openStream = { openIconStream(context, uri) }
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        val boundsStream = openStream() ?: return null
-        boundsStream.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        var sampleSize = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > ICON_MAX_DIMENSION) {
-            sampleSize *= 2
-        }
-        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        openStream()
-            ?.use { BitmapFactory.decodeStream(it, null, options) }
-            ?.asImageBitmap()
-    } catch (error: IOException) {
-        Log.w(TAG, "Could not read the selected shortcut icon", error)
+        openStream()?.use { ShortcutImageDownloader.renderSvg(it).asImageBitmap() }
+    } catch (_: IOException) {
         null
     } catch (error: SecurityException) {
-        Log.w(TAG, "Shortcut icon permission is no longer available", error)
+        Log.w("RemoteSettings", "Shortcut icon permission is no longer available", error)
         null
     }
 
@@ -555,6 +523,3 @@ private fun openIconStream(context: Context, uri: Uri) =
     } else {
         context.contentResolver.openInputStream(uri)
     }
-
-private const val TAG = "RemoteSettings"
-private const val ICON_MAX_DIMENSION = 512

@@ -15,16 +15,25 @@ import org.junit.Test
 class TvRemoteProtocolTest {
     @Test
     fun appLaunchUsesPackageIdWhenNoExplicitLinkIsSet() {
-        val message = TvRemoteProtocol.launchApp(RemoteCommand.LaunchApp("com.example.tv", null))
+        val message = TvRemoteProtocol.launchApp(RemoteCommand.LaunchApp("com.example.tv"))
         val link = ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(message, 90))).single()
         assertEquals("market://launch?id=com.example.tv", link.bytes?.toString(Charsets.UTF_8))
     }
 
     @Test
-    fun hdmiInputsUseDedicatedAndroidKeys() {
-        assertEquals(listOf(243, 244, 245, 246), RemoteCommand.Hdmi.entries.map {
-            TvRemoteProtocol.keyCode(it)
-        })
+    fun knownAppsUseBuiltInLinks() {
+        fun launchLink(packageName: String): String? {
+            val message = TvRemoteProtocol.launchApp(RemoteCommand.LaunchApp(packageName))
+            return ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(message, 90)))
+                .single().bytes?.toString(Charsets.UTF_8)
+        }
+
+        val youtube = "com.google.android.youtube.tv"
+        assertEquals("https://www.youtube.com", launchLink(youtube))
+        assertEquals("cloudstreamapp://open", launchLink("com.lagradost.cloudstream3"))
+        assertEquals("netflix://", launchLink("com.netflix.ninja"))
+        assertEquals("https://app.primevideo.com", launchLink("com.amazon.amazonvideo.livingroom"))
+        assertEquals("https://www.disneyplus.com", launchLink("com.disney.disneyplus"))
     }
 
     @Test

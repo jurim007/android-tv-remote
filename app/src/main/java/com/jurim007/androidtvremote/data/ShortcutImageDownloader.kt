@@ -1,7 +1,14 @@
 package com.jurim007.androidtvremote.data
 
 import android.content.Context
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.RectF
+import android.util.Xml
+import com.caverock.androidsvg.SVG
+import com.caverock.androidsvg.SVGParseException
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserException
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -17,7 +24,7 @@ object ShortcutImageDownloader {
         withContext(Dispatchers.IO) {
             val bytes = context.contentResolver.openInputStream(sourceUri)?.use(::readImageBytes)
                 ?: throw IOException("Could not open the selected image.")
-            validateImage(bytes)
+            parseSvg(bytes)
             storeImage(context, bytes)
         }
 
@@ -39,10 +46,10 @@ object ShortcutImageDownloader {
                         HttpsURLConnection.HTTP_OK -> {
                             val contentLength = connection.contentLengthLong
                             if (contentLength > MAX_IMAGE_BYTES) {
-                                throw IOException("The image is larger than the 5 MB limit.")
+                                throw IOException("The image is larger than the 1 MB limit.")
                             }
                             val bytes = connection.inputStream.use(::readImageBytes)
-                            validateImage(bytes)
+                            parseSvg(bytes)
                             return@withContext storeImage(context, bytes)
                         }
                         HttpsURLConnection.HTTP_MOVED_PERM,
@@ -77,7 +84,7 @@ object ShortcutImageDownloader {
         if (!directory.exists() && !directory.mkdirs()) {
             throw IOException("Could not save the selected icon.")
         }
-        val imageFile = File(directory, "${UUID.randomUUID()}.image")
+        val imageFile = File(directory, "${UUID.randomUUID()}.svg")
         imageFile.outputStream().use { it.write(bytes) }
         return Uri.fromFile(imageFile).toString()
     }
@@ -91,19 +98,38 @@ object ShortcutImageDownloader {
             if (count < 0) break
             totalBytes += count
             if (totalBytes > MAX_IMAGE_BYTES) {
-                throw IOException("The image is larger than the 5 MB limit.")
+                throw IOException("The image is larger than the 1 MB limit.")
             }
             output.write(buffer, 0, count)
         }
         return output.toByteArray()
     }
 
-    private fun validateImage(bytes: ByteArray) {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-        val pixels = options.outWidth.toLong() * options.outHeight.toLong()
-        if (options.outWidth <= 0 || options.outHeight <= 0 || pixels > MAX_IMAGE_PIXELS) {
-            throw IOException("The link does not contain a supported image.")
+    fun renderSvg(input: java.io.InputStream): Bitmap {
+        val svg = parseSvg(readImageBytes(input))
+        return Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888).also { bitmap ->
+            svg.renderToCanvas(Canvas(bitmap), RectF(0f, 0f, ICON_PIXELS.toFloat(), ICON_PIXELS.toFloat()))
+        }
+    }
+
+    private fun parseSvg(bytes: ByteArray): SVG {
+        try {
+            val parser = Xml.newPullParser()
+            parser.setInput(bytes.inputStream(), null)
+            while (parser.eventType != XmlPullParser.START_TAG) {
+                when (parser.nextToken()) {
+                    XmlPullParser.DOCDECL, XmlPullParser.END_DOCUMENT ->
+                        throw IOException("Select an SVG without a document type declaration.")
+                }
+            }
+            if (parser.name != "svg" || parser.namespace != "http://www.w3.org/2000/svg") {
+                throw IOException("The file must be an SVG image.")
+            }
+            return SVG.getFromInputStream(bytes.inputStream())
+        } catch (error: XmlPullParserException) {
+            throw IOException("The file is not valid SVG.", error)
+        } catch (error: SVGParseException) {
+            throw IOException("The file is not valid SVG.", error)
         }
     }
 
@@ -111,8 +137,8 @@ object ShortcutImageDownloader {
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 8_000
     private const val MAX_REDIRECTS = 4
-    private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
-    private const val MAX_IMAGE_PIXELS = 40_000_000L
+    private const val MAX_IMAGE_BYTES = 1024 * 1024
+    private const val ICON_PIXELS = 192
     private const val BUFFER_SIZE = 8 * 1024
     private const val HTTP_SEE_OTHER = 303
     private const val HTTP_TEMP_REDIRECT = 307
