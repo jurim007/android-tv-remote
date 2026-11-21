@@ -1,5 +1,6 @@
 package com.jurim007.androidtvremote.data.protocol
 
+import com.jurim007.androidtvremote.domain.RemoteCommand
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
@@ -12,6 +13,28 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TvRemoteProtocolTest {
+    @Test
+    fun pongEchoesTheTvSequence() {
+        val ping = byteArrayOf(0x42, 0x05, 0x08, 0x96.toByte(), 0x01, 0x10, 0x01)
+        assertArrayEquals(
+            byteArrayOf(0x4a, 0x03, 0x08, 0x96.toByte(), 0x01),
+            TvRemoteProtocol.pingResponse(ping),
+        )
+        assertArrayEquals(
+            byteArrayOf(0x4a, 0x02, 0x08, 0x00),
+            TvRemoteProtocol.pingResponse(byteArrayOf(0x42, 0x00)),
+        )
+    }
+
+    @Test
+    fun deleteInjectsAndroidBackspace() {
+        val keyCode = checkNotNull(TvRemoteProtocol.keyCode(RemoteCommand.Delete))
+        assertArrayEquals(
+            byteArrayOf(0x52, 0x04, 0x08, 67, 0x10, 0x03),
+            TvRemoteProtocol.keyCommand(keyCode, TvRemoteProtocol.DIRECTION_SHORT),
+        )
+    }
+
     @Test
     fun protobufFieldsAndLengthDelimitedFramesRoundTrip() {
         val message = ProtoWriter()
