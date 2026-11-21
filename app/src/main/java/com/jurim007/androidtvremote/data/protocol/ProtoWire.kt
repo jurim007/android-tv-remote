@@ -24,6 +24,12 @@ internal class ProtoWriter {
         }
     }
 
+    fun varint(number: Int, value: Long): ProtoWriter = apply {
+        require(number > 0)
+        writeVarint((number shl 3).toLong())
+        writeVarint(value)
+    }
+
     fun bytes(number: Int, value: ByteArray): ProtoWriter = apply {
         require(number > 0)
         writeVarint(((number shl 3) or LENGTH_DELIMITED).toLong())

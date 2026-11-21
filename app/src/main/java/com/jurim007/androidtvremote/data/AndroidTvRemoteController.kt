@@ -3,6 +3,7 @@ package com.jurim007.androidtvremote.data
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.util.Log
 import com.jurim007.androidtvremote.data.protocol.ProtoWire
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
 import com.jurim007.androidtvremote.domain.RemoteCommand
@@ -23,6 +24,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,12 +33,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -58,6 +62,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private val mutableMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     override val messages: SharedFlow<String> = mutableMessages.asSharedFlow()
 
+    private val connectionLock = Any()
     private val nsdLock = Any()
     private val servicesToResolve = ArrayDeque<NsdServiceInfo>()
     private val discoveredByServiceName = mutableMapOf<String, TvDevice>()
@@ -73,10 +78,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private var pendingCertificateFingerprint: String? = null
     @Volatile
     private var remoteSocket: SSLSocket? = null
-    @Volatile
     private var connectingSocket: SSLSocket? = null
     private var readerJob: Job? = null
-    @Volatile
+    private var reconnectJob: Job? = null
     private var holdingJob: Job? = null
     @Volatile
     private var activeFeatures = 0
@@ -84,7 +88,6 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private var activeHoldId: Long? = null
     @Volatile
     private var pairingGeneration = 0L
-    @Volatile
     private var connectionGeneration = 0L
     @Volatile
     private var imeCounter = 0
@@ -107,15 +110,18 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             servicesToResolve.clear()
             val listener = object : NsdManager.DiscoveryListener {
                 override fun onDiscoveryStarted(serviceType: String) {
-                    if (mutableConnectionState.value.phase != TvConnectionPhase.CONNECTED) {
-                        mutableConnectionState.value =
-                            TvConnectionState(TvConnectionPhase.DISCOVERING)
+                    mutableConnectionState.update { state ->
+                        when (state.phase) {
+                            TvConnectionPhase.DISCONNECTED, TvConnectionPhase.ERROR ->
+                                TvConnectionState(TvConnectionPhase.DISCOVERING)
+                            else -> state
+                        }
                     }
                 }
 
                 override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
                     synchronized(nsdLock) { discoveryListener = null }
-                    setError("TV discovery could not start (error $errorCode).")
+                    reportDiscoveryFailure("TV discovery could not start (error $errorCode).")
                 }
 
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
@@ -145,7 +151,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
             } catch (error: RuntimeException) {
                 discoveryListener = null
-                setError("TV discovery failed: ${error.message ?: "unknown error"}")
+                reportDiscoveryFailure("TV discovery failed: ${error.message ?: "unknown error"}")
             }
         }
     }
@@ -163,9 +169,20 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         } catch (error: IllegalArgumentException) {
             emitMessage("TV discovery had already stopped.")
         }
-        if (mutableConnectionState.value.phase == TvConnectionPhase.DISCOVERING) {
-            mutableConnectionState.value = TvConnectionState()
+        mutableConnectionState.update { state ->
+            if (state.phase == TvConnectionPhase.DISCOVERING) TvConnectionState() else state
         }
+    }
+
+    private fun reportDiscoveryFailure(message: String) {
+        mutableConnectionState.update { state ->
+            when (state.phase) {
+                TvConnectionPhase.DISCONNECTED, TvConnectionPhase.DISCOVERING, TvConnectionPhase.ERROR ->
+                    state.copy(phase = TvConnectionPhase.ERROR, message = message)
+                else -> state
+            }
+        }
+        emitMessage(message)
     }
 
     override suspend fun beginPairing(device: TvDevice) = withContext(Dispatchers.IO) {
@@ -278,60 +295,81 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         }
 
     override suspend fun connect(device: TvDevice) = withContext(Dispatchers.IO) {
-        val expectedFingerprint = device.serverCertificateFingerprint
-            ?: throw IllegalArgumentException("Pair this TV before connecting.")
-        disconnect()
-        val connectionAttempt = connectionGeneration
-        mutableConnectionState.value = TvConnectionState(
-            phase = TvConnectionPhase.CONNECTING,
-            device = device,
-            message = "Connecting to ${device.name}…",
-        )
-        var socket: SSLSocket? = null
+        requireNotNull(device.serverCertificateFingerprint) { "Pair this TV before connecting." }
+        val (generation, sockets) = synchronized(connectionLock) {
+            val sockets = resetConnectionLocked()
+            mutableConnectionState.value = TvConnectionState(
+                phase = TvConnectionPhase.CONNECTING,
+                device = device,
+                message = "Connecting to ${device.name}…",
+            )
+            connectionGeneration to sockets
+        }
+        sockets.forEach { it.closeQuietly() }
+
         try {
-            socket = openTlsSocket(device, device.port, expectedFingerprint)
-            connectingSocket = socket
-            if (connectionAttempt != connectionGeneration) {
-                if (connectingSocket === socket) connectingSocket = null
-                socket.close()
-                return@withContext
+            openRemoteSession(device, generation)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            synchronized(connectionLock) {
+                if (generation != connectionGeneration) return@withContext
+                Log.w(TAG, "Could not connect to ${device.name}", error)
+                setError("Could not connect to ${device.name}: ${error.message ?: "connection failed"}", device)
             }
+            throw error
+        }
+    }
+
+    private suspend fun openRemoteSession(device: TvDevice, generation: Long) {
+        val context = coroutineContext
+        context.ensureActive()
+        val socket = openTlsSocket(device, device.port, device.serverCertificateFingerprint)
+        var connected = false
+        try {
+            synchronized(connectionLock) {
+                if (generation != connectionGeneration) return
+                connectingSocket = socket
+            }
+
             val configure = readRemoteUntil(socket, 1)
             val advertisedFeatures = TvRemoteProtocol.remoteFeatures(configure)
                 ?: throw IOException("The TV did not advertise remote-control capabilities.")
-            val requestedFeatures = advertisedFeatures and SUPPORTED_FEATURES
-            writeMessage(socket, TvRemoteProtocol.remoteConfigure(requestedFeatures))
+            val negotiatedFeatures = advertisedFeatures and SUPPORTED_FEATURES
+            writeMessage(socket, TvRemoteProtocol.remoteConfigure(negotiatedFeatures))
 
             readRemoteUntil(socket, 2)
-            val negotiatedFeatures = requestedFeatures
             writeMessage(socket, TvRemoteProtocol.remoteSetActive(negotiatedFeatures))
             readRemoteUntil(socket, 40)
 
-            if (connectionAttempt != connectionGeneration) {
-                if (connectingSocket === socket) connectingSocket = null
-                socket.close()
-                return@withContext
+            // The handshake timeout would also expire during normal gaps in TV traffic.
+            socket.soTimeout = 0
+            synchronized(connectionLock) {
+                context.ensureActive()
+                if (generation != connectionGeneration) return
+
+                connectingSocket = null
+                remoteSocket = socket
+                activeFeatures = negotiatedFeatures
+                imeCounter = 0
+                fieldCounter = 0
+                connected = true
+                reconnectJob = null
+                Log.i(TAG, "Connected to ${device.name}")
+                mutableConnectionState.value = TvConnectionState(
+                    phase = TvConnectionPhase.CONNECTED,
+                    device = device,
+                    supportedFeatures = negotiatedFeatures,
+                )
+                readerJob = scope.launch { readRemoteMessages(socket, device) }
             }
-            remoteSocket = socket
-            connectingSocket = null
-            if (connectionAttempt != connectionGeneration) {
-                if (remoteSocket === socket) remoteSocket = null
-                socket.close()
-                return@withContext
+        } finally {
+            if (!connected) {
+                synchronized(connectionLock) {
+                    if (connectingSocket === socket) connectingSocket = null
+                }
+                socket.closeQuietly()
             }
-            activeFeatures = negotiatedFeatures
-            mutableConnectionState.value = TvConnectionState(
-                phase = TvConnectionPhase.CONNECTED,
-                device = device,
-                supportedFeatures = negotiatedFeatures,
-            )
-            readerJob = scope.launch { readRemoteMessages(socket) }
-        } catch (error: Exception) {
-            socket?.close()
-            if (connectingSocket === socket) connectingSocket = null
-            if (connectionAttempt != connectionGeneration) return@withContext
-            setError("Could not connect to ${device.name}: ${error.message ?: "connection failed"}", device)
-            throw error
         }
     }
 
@@ -344,122 +382,106 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     }
 
     override suspend fun disconnect() {
+        val sockets = synchronized(connectionLock) { resetConnectionLocked() }
+        sockets.forEach { it.closeQuietly() }
+    }
+
+    private fun resetConnectionLocked(): List<SSLSocket> {
         connectionGeneration += 1
-        activeHoldId = null
-        holdingJob?.cancel()
-        holdingJob = null
+        clearHoldLocked()
+        reconnectJob?.cancel()
+        reconnectJob = null
         readerJob?.cancel()
         readerJob = null
-        connectingSocket?.close()
+        val sockets = listOfNotNull(connectingSocket, remoteSocket)
         connectingSocket = null
-        remoteSocket?.close()
         remoteSocket = null
         activeFeatures = 0
         mutableConnectionState.value = TvConnectionState()
+        return sockets
     }
 
     override fun send(command: RemoteCommand) {
-        if (outgoing.trySend(OutgoingAction.Command(command)).isFailure) {
+        val socket = remoteSocket ?: run {
+            emitMessage("Connect to a paired TV before sending commands.")
+            return
+        }
+        if (outgoing.trySend(OutgoingAction(socket, command)).isFailure) {
             emitMessage("The command could not be queued.")
         }
     }
 
     override fun startHolding(command: RemoteCommand, holdId: Long) {
-        val keyCode = TvRemoteProtocol.keyCode(command)
-        if (keyCode == null) {
+        if (TvRemoteProtocol.keyCode(command) == null) {
             emitMessage("That action cannot be held.")
             return
         }
-        if (mutableConnectionState.value.phase != TvConnectionPhase.CONNECTED) {
-            emitMessage(
-                "Connect to a paired TV before sending commands.",
-            )
-            return
-        }
-        if (!supportsCommand(command)) {
-            emitMessage("This TV does not support that remote command.")
-            return
-        }
+        synchronized(connectionLock) {
+            val socket = remoteSocket ?: run {
+                emitMessage("Connect to a paired TV before sending commands.")
+                return
+            }
+            if (!supportsCommand(command)) {
+                emitMessage("This TV does not support that remote command.")
+                return
+            }
 
-        activeHoldId = holdId
-        if (
-            outgoing.trySend(
-                OutgoingAction.HeldCommand(command, holdId, isInitialPress = true),
-            ).isFailure
-        ) {
-            activeHoldId = null
-            emitMessage("The button press could not be queued.")
-            return
-        }
-        holdingJob?.cancel()
-        holdingJob = scope.launch {
-            delay(HOLD_INITIAL_DELAY_MS)
-            var queueOverflowReported = false
-            while (activeHoldId == holdId) {
-                if (
-                    outgoing.trySend(
-                        OutgoingAction.HeldCommand(command, holdId, isInitialPress = false),
-                    ).isFailure
-                ) {
-                    if (!queueOverflowReported) {
+            clearHoldLocked()
+            if (outgoing.trySend(OutgoingAction(socket, command)).isFailure) {
+                emitMessage("The button press could not be queued.")
+                return
+            }
+            activeHoldId = holdId
+            holdingJob = scope.launch {
+                delay(HOLD_INITIAL_DELAY_MS)
+                var queueOverflowReported = false
+                while (activeHoldId == holdId) {
+                    val repeat = OutgoingAction(socket, command, holdId)
+                    if (outgoing.trySend(repeat).isFailure && !queueOverflowReported) {
                         emitMessage("The TV is not responding quickly; held-command repeats are being skipped.")
                         queueOverflowReported = true
                     }
+                    delay(HOLD_REPEAT_INTERVAL_MS)
                 }
-                delay(HOLD_REPEAT_INTERVAL_MS)
             }
         }
     }
 
     override fun stopHolding(holdId: Long) {
-        if (activeHoldId == holdId) {
-            activeHoldId = null
-            holdingJob?.cancel()
-            holdingJob = null
+        synchronized(connectionLock) {
+            if (activeHoldId == holdId) clearHoldLocked()
         }
+    }
+
+    private fun clearHoldLocked() {
+        activeHoldId = null
+        holdingJob?.cancel()
+        holdingJob = null
     }
 
     override fun close() {
         pairingGeneration += 1
-        connectionGeneration += 1
         stopDiscovery()
         closePendingPairing()
-        connectingSocket?.close()
-        connectingSocket = null
-        remoteSocket?.close()
-        remoteSocket = null
-        scope.cancel()
+        val sockets = synchronized(connectionLock) {
+            scope.cancel()
+            resetConnectionLocked()
+        }
+        sockets.forEach { it.closeQuietly() }
         outgoing.close()
     }
 
-    private suspend fun processOutgoingAction(action: OutgoingAction) {
-        if (
-            action is OutgoingAction.HeldCommand &&
-            !action.isInitialPress &&
-            action.holdId != activeHoldId
-        ) return
-        val socket = remoteSocket
-        if (socket == null || mutableConnectionState.value.phase != TvConnectionPhase.CONNECTED) {
-            emitMessage("Connect to a paired TV before sending commands.")
-            return
+    private fun processOutgoingAction(action: OutgoingAction) {
+        val device = synchronized(connectionLock) {
+            if (action.socket !== remoteSocket) return
+            if (action.repeatHoldId != null && action.repeatHoldId != activeHoldId) return
+            mutableConnectionState.value.device ?: return
         }
 
         try {
-            when (action) {
-                is OutgoingAction.Command -> sendCommand(socket, action.command)
-                is OutgoingAction.HeldCommand -> {
-                    if (action.isInitialPress || action.holdId == activeHoldId) {
-                        sendCommand(socket, action.command)
-                    }
-                }
-            }
+            sendCommand(action.socket, action.command)
         } catch (error: IOException) {
-            activeHoldId = null
-            holdingJob?.cancel()
-            holdingJob = null
-            setError("The TV connection was interrupted: ${error.message ?: "I/O error"}")
-            socket.close()
-            if (remoteSocket === socket) remoteSocket = null
+            handleConnectionLoss(action.socket, device, error)
         } catch (error: IllegalArgumentException) {
             emitMessage("The TV command could not be encoded: ${error.message ?: "invalid command"}")
         }
@@ -516,34 +538,76 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         return activeFeatures and requiredFeatures == requiredFeatures
     }
 
-    private suspend fun readRemoteMessages(socket: SSLSocket) {
+    private fun readRemoteMessages(socket: SSLSocket, device: TvDevice) {
         try {
-            while (socket === remoteSocket && !socket.isClosed) {
+            while (socket === remoteSocket) {
                 val message = readDelimited(socket)
-                if (message == null) throw EOFException("The TV closed the connection.")
+                    ?: throw EOFException("The TV closed the connection.")
                 val response = TvRemoteProtocol.pingResponse(message)
                 if (response != null) {
                     writeMessage(socket, response)
                 } else if (TvRemoteProtocol.hasRemoteError(message)) {
+                    Log.w(TAG, "The TV reported a remote protocol error")
                     emitMessage("The TV reported that a remote command could not be handled.")
                 } else {
                     val (newImeCounter, newFieldCounter) = TvRemoteProtocol.imeCounters(message)
-                    if (newImeCounter != null) imeCounter = newImeCounter
-                    if (newFieldCounter != null) fieldCounter = newFieldCounter
+                    synchronized(connectionLock) {
+                        if (socket !== remoteSocket) return
+                        if (newImeCounter != null) imeCounter = newImeCounter
+                        if (newFieldCounter != null) fieldCounter = newFieldCounter
+                    }
                 }
             }
-        } catch (error: CancellationException) {
-            throw error
         } catch (error: IOException) {
-            if (socket === remoteSocket) {
-                activeHoldId = null
-                holdingJob?.cancel()
-                holdingJob = null
-                setError("The TV disconnected: ${error.message ?: "connection closed"}")
-                socket.close()
-                remoteSocket = null
-                activeFeatures = 0
+            handleConnectionLoss(socket, device, error)
+        }
+    }
+
+    private fun handleConnectionLoss(socket: SSLSocket, device: TvDevice, error: IOException) {
+        synchronized(connectionLock) {
+            if (socket !== remoteSocket) return
+            remoteSocket = null
+            activeFeatures = 0
+            clearHoldLocked()
+            readerJob?.cancel()
+            readerJob = null
+            Log.w(TAG, "Connection to ${device.name} dropped", error)
+            val generation = connectionGeneration
+            mutableConnectionState.value = TvConnectionState(
+                phase = TvConnectionPhase.CONNECTING,
+                device = device,
+                message = "Reconnecting to ${device.name}…",
+            )
+            reconnectJob = scope.launch { reconnect(device, generation) }
+        }
+        socket.closeQuietly()
+    }
+
+    private suspend fun reconnect(device: TvDevice, generation: Long) {
+        for (attempt in 1..MAX_RECONNECT_ATTEMPTS) {
+            delay(RECONNECT_DELAY_MS * attempt)
+            try {
+                openRemoteSession(device, generation)
+                return
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "Reconnect attempt $attempt failed", error)
             }
+        }
+        synchronized(connectionLock) {
+            if (generation == connectionGeneration) {
+                reconnectJob = null
+                setError("Could not reconnect to ${device.name}.", device)
+            }
+        }
+    }
+
+    private fun Socket.closeQuietly() {
+        try {
+            close()
+        } catch (error: IOException) {
+            Log.d(TAG, "Socket close failed", error)
         }
     }
 
@@ -562,6 +626,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         val plainSocket = Socket()
         var tlsSocket: SSLSocket? = null
         try {
+            plainSocket.tcpNoDelay = true
+            plainSocket.keepAlive = true
             plainSocket.connect(InetSocketAddress(device.host, port), CONNECT_TIMEOUT_MS)
             val socket = sslContext.socketFactory.createSocket(
                 plainSocket,
@@ -574,8 +640,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             socket.startHandshake()
             return socket
         } catch (error: Exception) {
-            tlsSocket?.close()
-            plainSocket.close()
+            tlsSocket?.closeQuietly()
+            plainSocket.closeQuietly()
             throw error
         }
     }
@@ -597,10 +663,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         repeat(MAX_HANDSHAKE_MESSAGES) {
             val message = readDelimited(socket)
                 ?: throw EOFException("The TV closed the remote connection.")
-            val status = ProtoWire.parse(message).firstOrNull { it.number == 3 }?.varint
-            if (status != null && status != 0L) {
-                throw IOException("The TV remote handshake returned status $status.")
+            if (TvRemoteProtocol.hasRemoteError(message)) {
+                throw IOException("The TV rejected the remote handshake.")
             }
+            TvRemoteProtocol.pingResponse(message)?.let { writeMessage(socket, it) }
             if (TvRemoteProtocol.remoteField(message, fieldNumber) != null) return message
         }
         throw IOException("The TV remote handshake did not complete.")
@@ -681,14 +747,11 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             .sortedBy(TvDevice::name)
     }
 
-    private sealed interface OutgoingAction {
-        data class Command(val command: RemoteCommand) : OutgoingAction
-        data class HeldCommand(
-            val command: RemoteCommand,
-            val holdId: Long,
-            val isInitialPress: Boolean,
-        ) : OutgoingAction
-    }
+    private data class OutgoingAction(
+        val socket: SSLSocket,
+        val command: RemoteCommand,
+        val repeatHoldId: Long? = null,
+    )
 
     private class PinnedTvTrustManager(
         private val expectedFingerprint: String?,
@@ -712,6 +775,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     }
 
     private companion object {
+        const val TAG = "AndroidTvRemote"
         const val SERVICE_TYPE_BASE = "_androidtvremote2._tcp"
         const val SERVICE_TYPE = "$SERVICE_TYPE_BASE."
         const val CONNECT_TIMEOUT_MS = 6_000
@@ -720,6 +784,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         const val HOLD_INITIAL_DELAY_MS = 420L
         const val HOLD_REPEAT_INTERVAL_MS = 145L
         const val MAX_HANDSHAKE_MESSAGES = 12
+        const val RECONNECT_DELAY_MS = 2_000L
+        const val MAX_RECONNECT_ATTEMPTS = 5
         const val SUPPORTED_FEATURES =
             TvRemoteProtocol.FEATURE_PING or
                 TvRemoteProtocol.FEATURE_KEY or
