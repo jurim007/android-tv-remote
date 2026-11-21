@@ -13,15 +13,23 @@ fun gitOutput(vararg args: String): String? =
         isIgnoreExitValue = true
     }.standardOutput.asText.get().trim().takeIf(String::isNotEmpty)
 
-val releaseTag = Regex("""v?\d+(?:\.\d+){1,2}(?:[-+][A-Za-z0-9.\-+]+)?""")
+val releaseTag = Regex("""v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)""")
 val workflowTag = providers.environmentVariable("GITHUB_REF_TYPE").orNull
     ?.takeIf { it == "tag" }
     ?.let { providers.environmentVariable("GITHUB_REF_NAME").orNull }
 val releaseVersion = sequenceOf(
     { providers.gradleProperty("releaseVersion").orNull },
     { workflowTag },
-    { gitOutput("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--match", "[0-9]*") },
-).mapNotNull { it()?.takeIf(releaseTag::matches)?.removePrefix("v") }.firstOrNull()
+    { gitOutput("tag", "--merged", "HEAD", "--sort=-version:refname") },
+).flatMap { it().orEmpty().lineSequence() }
+    .firstOrNull(releaseTag::matches)
+    ?.removePrefix("v") ?: "1.0.0"
+
+val (releaseMajor, releaseMinor, releasePatch) = releaseVersion.split('.').map(String::toInt)
+require(releaseMajor <= 2099 && releaseMinor <= 999 && releasePatch <= 999) {
+    "Release version is out of range for an Android version code: $releaseVersion"
+}
+val releaseVersionCode = releaseMajor * 1_000_000 + releaseMinor * 1_000 + releasePatch + 1
 
 val githubLogin = Regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 val githubRemote = Regex(
@@ -41,8 +49,8 @@ android {
         applicationId = "com.jurim007.androidtvremote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = releaseVersion ?: "1.0"
+        versionCode = releaseVersionCode
+        versionName = releaseVersion
         buildConfigField("String", "GITHUB_AUTHOR", "\"$githubAuthor\"")
     }
 

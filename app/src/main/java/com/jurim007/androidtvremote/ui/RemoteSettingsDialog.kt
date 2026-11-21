@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -74,6 +75,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
@@ -87,6 +89,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import com.jurim007.androidtvremote.BuildConfig
+import com.jurim007.androidtvremote.R
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
@@ -286,9 +289,11 @@ fun RemoteSettingsDialog(
                     ) { onOptionChange(RemoteOption.VIBRATION, it) }
                 }
                 SettingsSection("About") {
-                    AboutRow("Version", BuildConfig.VERSION_NAME)
+                    AboutRow("Version") {
+                        Text(BuildConfig.VERSION_NAME, color = RemoteText)
+                    }
                     if (BuildConfig.GITHUB_AUTHOR.isNotEmpty()) {
-                        AboutRow("Author", "@${BuildConfig.GITHUB_AUTHOR}")
+                        AboutRow("Author") { GitHubAuthorBadge(BuildConfig.GITHUB_AUTHOR) }
                     }
                 }
                 Row(
@@ -408,13 +413,47 @@ private fun SettingsSection(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun AboutRow(label: String, value: String) {
+private fun AboutRow(label: String, content: @Composable () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, color = RemoteMuted, style = MaterialTheme.typography.bodyMedium)
-        Text(value, color = RemoteText, style = MaterialTheme.typography.bodyMedium)
+        content()
+    }
+}
+
+@Composable
+private fun GitHubAuthorBadge(username: String) {
+    Row(
+        modifier = Modifier
+            .padding(start = 12.dp)
+            .clip(CircleShape)
+            .background(RemoteAccent.copy(alpha = 0.10f))
+            .border(1.dp, RemoteAccent.copy(alpha = 0.34f), CircleShape)
+            .padding(start = 6.dp, top = 5.dp, end = 12.dp, bottom = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(26.dp).background(RemoteAccent.copy(alpha = 0.16f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_github),
+                contentDescription = "GitHub",
+                modifier = Modifier.size(16.dp),
+                tint = RemoteAccent,
+            )
+        }
+        Text(
+            text = "@$username",
+            color = RemoteText,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 

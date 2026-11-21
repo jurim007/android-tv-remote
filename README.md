@@ -48,7 +48,18 @@ The CloudStream SVG was supplied by the user. Other wordmarks are from Wikimedia
 Build the debug APK with `./gradlew assembleDebug`. Pairing and command behavior should
 be verified against the target TV; TV models may advertise different capabilities.
 
-Remote settings shows the APK's version and GitHub author. A tagged GitHub Actions build
-uses its release tag and repository owner. Local builds use the nearest reachable version
-tag and the owner in the GitHub `origin` URL. Source archives without tags use the base
-version. To build with a specific release version, pass `-PreleaseVersion=1.2.3`.
+## Release versions
+
+Use GitHub release tags in the form `vMAJOR.MINOR.PATCH`, starting at `v1.0.0`.
+
+- **Major** for a large change, such as adding support for Tizen.
+- **Minor** for a new feature, such as a microphone or automatic updates.
+- **Patch** for bug fixes and small styling adjustments.
+
+Build the APK from the release tag before uploading it to GitHub. The About section
+shows the version embedded in that APK. GitHub Actions reads the build tag and
+repository owner. Local builds use the latest reachable version tag and the owner
+from the GitHub `origin` URL. An untagged build starts at `1.0.0`. You can also
+set the version with `-PreleaseVersion=1.2.3`.
+
+The GitHub badge uses the GitHub mark from [Simple Icons](https://simpleicons.org/).
