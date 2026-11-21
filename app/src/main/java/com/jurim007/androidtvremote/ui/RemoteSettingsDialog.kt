@@ -43,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
+import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
@@ -177,7 +179,7 @@ fun RemoteSettingsDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Add up to four TV apps by package ID. Custom icons use SVG files or HTTPS SVG links.",
+                    text = "Add up to eight shortcuts by app name or package ID.",
                     color = RemoteMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -202,11 +204,11 @@ fun RemoteSettingsDialog(
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(
                     onClick = { addingShortcut = true },
-                    enabled = shortcuts.size < MAX_SHORTCUTS,
+                    enabled = shortcuts.size < MAX_TV_SHORTCUTS,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = null)
-                    Text(if (shortcuts.size < MAX_SHORTCUTS) "Add TV app" else "Four app limit reached")
+                    Text(if (shortcuts.size < MAX_TV_SHORTCUTS) "Add TV app" else "Eight app limit reached")
                 }
                 if (shortcuts != defaultTvShortcuts) {
                     TextButton(onClick = { onShortcutsChange(defaultTvShortcuts) }) {
@@ -245,6 +247,8 @@ private fun AddTvAppForm(
     var iconUri by rememberSaveable(initialShortcut?.packageName) {
         mutableStateOf(initialShortcut?.iconUri)
     }
+    var nameFocused by remember { mutableStateOf(false) }
+    var showNameSuggestions by rememberSaveable { mutableStateOf(false) }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     var iconLoadError by remember { mutableStateOf(false) }
     var processingImage by remember { mutableStateOf(false) }
@@ -273,12 +277,44 @@ private fun AddTvAppForm(
 
     OutlinedTextField(
         value = name,
-        onValueChange = { name = it; validationMessage = null },
-        modifier = Modifier.fillMaxWidth(),
+        onValueChange = {
+            name = it
+            showNameSuggestions = true
+            validationMessage = null
+        },
+        modifier = Modifier.fillMaxWidth().onFocusChanged { nameFocused = it.isFocused },
         label = { Text("App name") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
     )
+    val query = name.trim()
+    if (nameFocused && showNameSuggestions && query.isNotEmpty()) {
+        val otherPackageIds = existingShortcuts
+            .filterNot { it.packageName == initialShortcut?.packageName }
+            .map { it.packageName }
+            .toSet()
+        shortcutApps.asSequence()
+            .filter { it.name.contains(query, ignoreCase = true) }
+            .filterNot { app -> app.packageIds.any { it in otherPackageIds } }
+            .sortedByDescending { it.name.startsWith(query, ignoreCase = true) }
+            .take(4)
+            .forEach { app ->
+                TextButton(
+                    onClick = {
+                        name = app.name
+                        val packageId = app.packageIds.firstOrNull { it == packageField.text.trim() }
+                            ?: app.packageIds.first()
+                        packageField = TextFieldValue(packageId)
+                        showNameSuggestions = false
+                        validationMessage = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ShortcutIcon(TvAppShortcut(app.name, app.packageIds.first()), Modifier.size(22.dp))
+                    Text(app.name, modifier = Modifier.padding(start = 10.dp))
+                }
+            }
+    }
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = packageField,
@@ -495,7 +531,6 @@ fun ShortcutIcon(
     }
 }
 
-private const val MAX_SHORTCUTS = 4
 private val PACKAGE_ID = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
 
 @Composable

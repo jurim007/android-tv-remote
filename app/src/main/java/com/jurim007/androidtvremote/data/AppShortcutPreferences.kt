@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
@@ -19,7 +20,7 @@ class AppShortcutPreferences(context: Context) {
     private val dataStore = context.preferencesDataStore
 
     val shortcuts: Flow<List<TvAppShortcut>> = dataStore.data.map { preferences ->
-        (preferences[TV_APP_SHORTCUTS]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_SHORTCUTS)
+        (preferences[TV_APP_SHORTCUTS]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_TV_SHORTCUTS)
     }
 
     val touchpadEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
@@ -36,7 +37,7 @@ class AppShortcutPreferences(context: Context) {
 
     suspend fun saveShortcuts(shortcuts: List<TvAppShortcut>) {
         dataStore.edit { preferences ->
-            preferences[TV_APP_SHORTCUTS] = encodeShortcuts(shortcuts.take(MAX_SHORTCUTS))
+            preferences[TV_APP_SHORTCUTS] = encodeShortcuts(shortcuts.take(MAX_TV_SHORTCUTS))
         }
     }
 
@@ -86,7 +87,6 @@ class AppShortcutPreferences(context: Context) {
         val TOUCHPAD_ENABLED = booleanPreferencesKey("touchpad_enabled")
         val SAVED_TVS = stringPreferencesKey("saved_tvs")
         val SELECTED_TV_ID = stringPreferencesKey("selected_tv_id")
-        const val MAX_SHORTCUTS = 4
 
         fun encodeShortcuts(shortcuts: List<TvAppShortcut>): String =
             JSONArray().apply {

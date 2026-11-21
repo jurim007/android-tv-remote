@@ -8,6 +8,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -168,7 +170,7 @@ fun RemoteScreen(
                 ),
             )
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(start = 20.dp, top = 26.dp, end = 20.dp, bottom = 4.dp),
+            .padding(start = 20.dp, top = 38.dp, end = 20.dp, bottom = 4.dp),
     ) {
         // Keep IME-driven height changes from reflowing the controls behind dialogs.
         val layoutHeight = remember(maxWidth) { maxHeight }
@@ -190,7 +192,7 @@ fun RemoteScreen(
         )
 
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             DeviceHeader(
@@ -207,7 +209,7 @@ fun RemoteScreen(
                     .height(headerHeight),
             )
             Spacer(Modifier.height(shortcutGap))
-            AppShortcutsRow(
+            AppShortcutsGrid(
                 shortcuts = shortcuts,
                 onLaunchApp = { shortcut ->
                     viewModel.send(
@@ -443,29 +445,34 @@ private fun DeviceHeader(
 }
 
 @Composable
-private fun AppShortcutsRow(
+private fun AppShortcutsGrid(
     shortcuts: List<TvAppShortcut>,
     onLaunchApp: (TvAppShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier.height(70.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val columns = 4
+    Column(
+        modifier = modifier.padding(vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        shortcuts.forEach { shortcut ->
-            RemoteTapTarget(
-                description = shortcut.name,
-                onClick = { onLaunchApp(shortcut) },
-                modifier = Modifier.weight(1f).height(56.dp),
-                shape = CircleShape,
-                background = surfaceBrush(),
-                border = RemoteBorder.copy(alpha = 0.78f),
-            ) {
-                ShortcutIcon(
-                    shortcut = shortcut,
-                    modifier = Modifier.size(width = 42.dp, height = 25.dp),
-                )
+        shortcuts.chunked(columns).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { shortcut ->
+                    RemoteTapTarget(
+                        description = shortcut.name,
+                        onClick = { onLaunchApp(shortcut) },
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = CircleShape,
+                        background = surfaceBrush(),
+                        border = RemoteBorder.copy(alpha = 0.78f),
+                    ) {
+                        ShortcutIcon(
+                            shortcut = shortcut,
+                            modifier = Modifier.size(width = 42.dp, height = 25.dp),
+                        )
+                    }
+                }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
