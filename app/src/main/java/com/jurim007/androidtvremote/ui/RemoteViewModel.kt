@@ -1,11 +1,15 @@
 package com.jurim007.androidtvremote.ui
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jurim007.androidtvremote.data.AndroidTvRemoteController
 import com.jurim007.androidtvremote.data.AppShortcutPreferences
+import com.jurim007.androidtvremote.data.AppUpdate
+import com.jurim007.androidtvremote.data.GitHubAppUpdates
+import com.jurim007.androidtvremote.data.UpdateSignatureMismatch
 import com.jurim007.androidtvremote.domain.PressAndHoldController
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
@@ -24,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     private val remoteController = AndroidTvRemoteController(application)
@@ -31,6 +36,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         PressAndHoldController(remoteController)
     private val shortcutPreferences = AppShortcutPreferences(application)
     private val operationMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val appUpdates = GitHubAppUpdates(application)
+    private val mutableUpdateState = MutableStateFlow(AppUpdateState())
+    internal val updateState = mutableUpdateState.asStateFlow()
+    private var updateJob: Job? = null
+    private var lastUpdateCheck: Long? = null
+    private var manualUpdateCheck = false
+    private var dismissedUpdate: String? = null
 
     private var voiceJob: Job? = null
     private var stopRecording: CompletableDeferred<Unit>? = null
@@ -65,6 +77,77 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val selectedId = shortcutPreferences.selectedTvId.first()
             saved.firstOrNull { it.id == selectedId }?.let(::connect)
         }
+    }
+
+    fun checkForUpdates(manual: Boolean = false) {
+        val state = mutableUpdateState.value
+        if (state.release != null) {
+            if (manual) mutableUpdateState.value = state.copy(manual = true)
+            return
+        }
+        if (manual) manualUpdateCheck = true
+        if (updateJob?.isActive == true) return
+        if (!manual && lastUpdateCheck?.let { SystemClock.elapsedRealtime() - it < 300_000 } == true) return
+
+        updateJob = viewModelScope.launch {
+            try {
+                val automaticChecks = RemoteOption.AUTOMATIC_UPDATE_CHECKS in shortcutPreferences.remoteOptions.first()
+                if (!manualUpdateCheck && !automaticChecks) return@launch
+                lastUpdateCheck = SystemClock.elapsedRealtime()
+                mutableUpdateState.value = AppUpdateState(checking = true)
+                val release = appUpdates.latest()
+                val showAutomaticPrompt = release != null && release.version != dismissedUpdate &&
+                    RemoteOption.AUTOMATIC_UPDATE_CHECKS in shortcutPreferences.remoteOptions.first()
+                if (manualUpdateCheck) {
+                    mutableUpdateState.value = AppUpdateState(
+                        release = release,
+                        manual = true,
+                        status = if (release == null) "TVControl is up to date." else null,
+                    )
+                } else if (showAutomaticPrompt) {
+                    mutableUpdateState.value = AppUpdateState(release = release)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "Update check failed", error)
+                if (manualUpdateCheck) {
+                    mutableUpdateState.value = AppUpdateState(status = "Couldn’t check for updates. Try again later.")
+                }
+            } finally {
+                manualUpdateCheck = false
+                if (mutableUpdateState.value.checking) mutableUpdateState.value = AppUpdateState()
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val state = mutableUpdateState.value
+        val release = state.release ?: return
+        if (state.downloading || state.apk != null) return
+        mutableUpdateState.value = state.copy(downloading = true, error = null)
+        viewModelScope.launch {
+            try {
+                val apk = appUpdates.download(release)
+                mutableUpdateState.value = state.copy(apk = apk, error = null)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "Update download failed", error)
+                val message = if (error is UpdateSignatureMismatch) {
+                    "This APK uses a different signing key from the installed app and can’t update it in place."
+                } else {
+                    "Couldn’t download or verify the update. Try again."
+                }
+                mutableUpdateState.value = state.copy(error = message)
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        if (mutableUpdateState.value.downloading) return
+        dismissedUpdate = mutableUpdateState.value.release?.version
+        mutableUpdateState.value = AppUpdateState()
     }
 
     fun send(command: RemoteCommand) {
@@ -117,6 +200,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 shortcutPreferences.setRemoteOption(option, enabled)
+                if (option == RemoteOption.AUTOMATIC_UPDATE_CHECKS && !enabled &&
+                    !mutableUpdateState.value.manual && !mutableUpdateState.value.downloading &&
+                    mutableUpdateState.value.apk == null
+                ) dismissUpdate()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -279,6 +366,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         const val TAG = "TVControl"
     }
 }
+
+internal data class AppUpdateState(
+    val checking: Boolean = false,
+    val release: AppUpdate? = null,
+    val manual: Boolean = false,
+    val status: String? = null,
+    val downloading: Boolean = false,
+    val apk: File? = null,
+    val error: String? = null,
+)
 
 
 internal enum class VoiceState { IDLE, STARTING, LISTENING, FINISHING }

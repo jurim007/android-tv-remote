@@ -142,6 +142,7 @@ fun RemoteScreen(
     val selectedTvId by viewModel.selectedTvId.collectAsStateWithLifecycle()
     val discoveredDevices by viewModel.discoveredDevices.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val selectedTv = savedTvs.firstOrNull { it.id == selectedTvId } ?: connectionState.device
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
@@ -164,6 +165,13 @@ fun RemoteScreen(
     }
     LaunchedEffect(showMicrophone, settingsOpen, connectionDialogMode) {
         if (!showMicrophone || settingsOpen || connectionDialogMode != null) viewModel.cancelVoice()
+    }
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) viewModel.checkForUpdates()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(lifecycleOwner, viewModel, connectionDialogMode) {
         val observer = LifecycleEventObserver { _, event ->
@@ -301,6 +309,9 @@ fun RemoteScreen(
             onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
             options = options,
             onOptionChange = viewModel::setRemoteOption,
+            checkingForUpdates = updateState.checking,
+            updateCheckStatus = updateState.status,
+            onCheckForUpdates = { viewModel.checkForUpdates(manual = true) },
             tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
             onTclInputsChange = viewModel::setTclInputsEnabled,
             onRestoreDefaults = viewModel::restoreRemoteDefaults,
@@ -325,6 +336,11 @@ fun RemoteScreen(
             onCancelPairing = viewModel::cancelPairing,
             onDismiss = { connectionDialogMode = null },
         )
+    }
+    if (updateState.release != null && connectionDialogMode == null && voiceState == VoiceState.IDLE &&
+        (!settingsOpen || updateState.manual)
+    ) {
+        AppUpdateDialog(updateState, viewModel::downloadUpdate, viewModel::dismissUpdate)
     }
 }
 

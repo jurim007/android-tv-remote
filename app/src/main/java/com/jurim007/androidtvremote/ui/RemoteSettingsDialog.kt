@@ -117,6 +117,9 @@ fun RemoteSettingsDialog(
     onTouchpadEnabledChange: (Boolean) -> Unit,
     options: Set<RemoteOption>,
     onOptionChange: (RemoteOption, Boolean) -> Unit,
+    checkingForUpdates: Boolean,
+    updateCheckStatus: String?,
+    onCheckForUpdates: () -> Unit,
     tclInputsEnabled: Boolean,
     onTclInputsChange: (String, Boolean) -> Unit,
     onRestoreDefaults: () -> Unit,
@@ -306,6 +309,22 @@ fun RemoteSettingsDialog(
                     if (BuildConfig.GITHUB_AUTHOR.isNotEmpty()) {
                         AboutRow("Author") { GitHubAuthorBadge(BuildConfig.GITHUB_AUTHOR) }
                     }
+                }
+                SettingsSection("Updates") {
+                    SettingsToggle(
+                        title = "Automatically check for updates",
+                        detail = "Check GitHub for a new release when you open TVControl.",
+                        enabled = RemoteOption.AUTOMATIC_UPDATE_CHECKS in options,
+                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_CHECKS, it) }
+                    SettingsLink(
+                        title = "Check for updates",
+                        detail = when {
+                            checkingForUpdates -> "Checking GitHub…"
+                            updateCheckStatus != null -> updateCheckStatus
+                            else -> "Look for a new release now."
+                        },
+                        onClick = onCheckForUpdates,
+                    )
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),

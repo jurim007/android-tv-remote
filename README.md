@@ -101,11 +101,20 @@ On the tested **TCL 55P69K**, the firmware ignores the standard Source key over 
 | Text or backspace does nothing | Focus an editable field on the TV first. Text input support can vary by TV app. |
 | Mic is dimmed or missing | Check **Show microphone** under **Remote layout**, connect to a TV that advertises voice support, and allow TVControl to use the phone’s microphone. |
 
+## App updates
+
+TVControl checks GitHub for a newer stable release when you open the app. When an
+update is available, tap **Update** to download it, then confirm the installation
+in Android’s installer. Android may first ask you to allow installs from TVControl.
+
+Under **Remote settings → Updates**, you can turn off automatic checks or tap
+**Check for updates** at any time. Updates between APKs signed with the same key
+keep your paired TVs and settings.
+
 ## Roadmap
 
 These features are planned and are not available yet.
 
-- [ ] In-app update checks and an update flow for GitHub releases.
 - [ ] Support for more TV operating systems, starting with exploration of Samsung Tizen and LG webOS.
 - [ ] Broader testing across Android TV and Google TV models, especially for Source, voice search, and package-ID app launches.
 

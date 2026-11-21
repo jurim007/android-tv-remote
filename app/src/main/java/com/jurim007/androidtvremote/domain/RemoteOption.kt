@@ -9,6 +9,7 @@ enum class RemoteOption(val preferenceKey: String, val enabledByDefault: Boolean
     MICROPHONE("show_microphone"),
     PHONE_VOLUME("phone_controls_tv_volume", enabledByDefault = false),
     VIBRATION("remote_button_vibration"),
+    AUTOMATIC_UPDATE_CHECKS("automatic_update_checks"),
     ;
 
     companion object {
