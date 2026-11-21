@@ -16,6 +16,7 @@ import java.io.IOException
 import java.net.URL
 import java.util.UUID
 import javax.net.ssl.HttpsURLConnection
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -107,8 +108,11 @@ object ShortcutImageDownloader {
 
     fun renderSvg(input: java.io.InputStream): Bitmap {
         val svg = parseSvg(readImageBytes(input))
-        return Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888).also { bitmap ->
-            svg.renderToCanvas(Canvas(bitmap), RectF(0f, 0f, ICON_PIXELS.toFloat(), ICON_PIXELS.toFloat()))
+        val aspect = svg.documentAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val width = (ICON_PIXELS * minOf(aspect, 1f)).roundToInt().coerceAtLeast(1)
+        val height = (ICON_PIXELS / maxOf(aspect, 1f)).roundToInt().coerceAtLeast(1)
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+            svg.renderToCanvas(Canvas(bitmap), RectF(0f, 0f, width.toFloat(), height.toFloat()))
         }
     }
 

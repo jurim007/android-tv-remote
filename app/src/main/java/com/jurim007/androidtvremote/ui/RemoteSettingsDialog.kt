@@ -6,6 +6,9 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -34,22 +38,33 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -69,7 +84,9 @@ import com.jurim007.androidtvremote.ui.theme.RemoteSurface
 import com.jurim007.androidtvremote.ui.theme.RemoteText
 import java.io.File
 import java.io.IOException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -85,6 +102,8 @@ fun RemoteSettingsDialog(
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
     var editingPackageName by rememberSaveable { mutableStateOf<String?>(null) }
     val editingShortcut = shortcuts.firstOrNull { it.packageName == editingPackageName }
+    val scrollState = rememberScrollState()
+    var viewport by remember { mutableStateOf(Rect.Zero) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -105,7 +124,16 @@ fun RemoteSettingsDialog(
                 )
                 .border(1.dp, RemoteBorder, RoundedCornerShape(28.dp))
                 .padding(22.dp)
-                .verticalScroll(rememberScrollState()),
+                .onGloballyPositioned { coordinates ->
+                    val topLeft = coordinates.positionInRoot()
+                    viewport = Rect(
+                        offset = topLeft,
+                        size = androidx.compose.ui.geometry.Size(
+                            coordinates.size.width.toFloat(), coordinates.size.height.toFloat(),
+                        ),
+                    )
+                }
+                .verticalScroll(scrollState),
         ) {
             Text(
                 text = when {
@@ -191,15 +219,18 @@ fun RemoteSettingsDialog(
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
                 } else {
-                    shortcuts.forEach { shortcut ->
-                        ShortcutSettingsRow(
-                            shortcut = shortcut,
-                            onEdit = { editingPackageName = shortcut.packageName },
-                            onRemove = {
-                                onShortcutsChange(shortcuts - shortcut)
-                            },
-                        )
+                    if (shortcuts.size > 1) {
+                        Text("Hold and drag to reorder.", color = RemoteMuted,
+                            style = MaterialTheme.typography.bodySmall)
                     }
+                    ReorderableShortcuts(
+                        shortcuts = shortcuts,
+                        scrollState = scrollState,
+                        viewport = viewport,
+                        onReorder = onShortcutsChange,
+                        onEdit = { editingPackageName = it.packageName },
+                        onRemove = { onShortcutsChange(shortcuts - it) },
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(
@@ -476,18 +507,117 @@ private fun AddTvAppForm(
 }
 
 @Composable
+private fun ReorderableShortcuts(
+    shortcuts: List<TvAppShortcut>,
+    scrollState: ScrollState,
+    viewport: Rect,
+    onReorder: (List<TvAppShortcut>) -> Unit,
+    onEdit: (TvAppShortcut) -> Unit,
+    onRemove: (TvAppShortcut) -> Unit,
+) {
+    val currentOnReorder by rememberUpdatedState(onReorder)
+    val rowHeight = with(LocalDensity.current) { ShortcutRowHeight.roundToPx().toFloat() }
+    val edgeSize = with(LocalDensity.current) { 44.dp.toPx() }
+    var listTop by remember { mutableStateOf(0f) }
+    var drag by remember(shortcuts) { mutableStateOf<ShortcutDrag?>(null) }
+    val target = drag?.let { (it.origin + (it.distance / rowHeight).roundToInt()).coerceIn(shortcuts.indices) }
+    val displayed = drag?.let { shortcuts.moveShortcut(it.origin, checkNotNull(target)) } ?: shortcuts
+    val direction = drag?.let {
+        when {
+            it.pointerY < viewport.top + edgeSize -> -1
+            it.pointerY > viewport.bottom - edgeSize -> 1
+            else -> 0
+        }
+    } ?: 0
+    LaunchedEffect(direction, scrollState) {
+        if (direction == 0) return@LaunchedEffect
+        while (true) {
+            val scrolled = scrollState.scrollBy(direction * edgeSize / 5)
+            val active = drag ?: break
+            if (scrolled == 0f) break
+            drag = active.copy(distance = active.distance + scrolled)
+            delay(16)
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { listTop = it.positionInRoot().y }
+            .pointerInput(shortcuts, rowHeight) {
+                if (shortcuts.size < 2) return@pointerInput
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { position ->
+                        val index = (position.y / rowHeight).toInt().coerceIn(shortcuts.indices)
+                        drag = ShortcutDrag(index, 0f, position.y + listTop)
+                    },
+                    onDrag = { change, amount ->
+                        drag = drag?.let {
+                            it.copy(distance = it.distance + amount.y, pointerY = change.position.y + listTop)
+                        }
+                    },
+                    onDragCancel = { drag = null },
+                    onDragEnd = {
+                        drag?.let {
+                            val destination = (it.origin + (it.distance / rowHeight).roundToInt())
+                                .coerceIn(shortcuts.indices)
+                            if (destination != it.origin) {
+                                currentOnReorder(shortcuts.moveShortcut(it.origin, destination))
+                            }
+                        }
+                        drag = null
+                    },
+                )
+            },
+    ) {
+        displayed.forEachIndexed { index, shortcut ->
+            key(shortcut.packageName) {
+                val moveActions = buildList {
+                    if (index > 0) add(CustomAccessibilityAction("Move up") {
+                        onReorder(shortcuts.moveShortcut(index, index - 1))
+                        true
+                    })
+                    if (index < displayed.lastIndex) add(CustomAccessibilityAction("Move down") {
+                        onReorder(shortcuts.moveShortcut(index, index + 1))
+                        true
+                    })
+                }
+                ShortcutSettingsRow(
+                    shortcut = shortcut,
+                    modifier = Modifier
+                        .background(if (index == target) RemoteSurface else Color.Transparent)
+                        .semantics { customActions = moveActions },
+                    onEdit = { onEdit(shortcut) },
+                    onRemove = { onRemove(shortcut) },
+                )
+            }
+        }
+    }
+}
+
+private data class ShortcutDrag(val origin: Int, val distance: Float, val pointerY: Float)
+
+private fun List<TvAppShortcut>.moveShortcut(from: Int, to: Int): List<TvAppShortcut> =
+    toMutableList().apply { add(to, removeAt(from)) }
+
+private val ShortcutRowHeight = 58.dp
+
+@Composable
 private fun ShortcutSettingsRow(
     shortcut: TvAppShortcut,
+    modifier: Modifier,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp),
+            .height(ShortcutRowHeight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShortcutIcon(shortcut, Modifier.size(42.dp))
+        Icon(Icons.Filled.DragHandle, contentDescription = null, tint = RemoteMuted,
+            modifier = Modifier.size(22.dp))
+        ShortcutIcon(shortcut, Modifier.size(36.dp))
         Column(
             modifier = Modifier
                 .weight(1f)

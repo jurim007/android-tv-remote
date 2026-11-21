@@ -36,7 +36,7 @@ The CloudStream SVG was supplied by the user. Other wordmarks are from Wikimedia
 [ESPN](https://commons.wikimedia.org/wiki/File:ESPN_wordmark.svg),
 [Hulu](https://commons.wikimedia.org/wiki/File:Hulu_logo_(2018).svg),
 [Peacock](https://commons.wikimedia.org/wiki/File:NBCUniversal_Peacock_Logo_(2026).svg),
-[Pluto TV](https://commons.wikimedia.org/wiki/File:Pluto_TV_logo_2020.svg), and
+[Pluto TV](https://commons.wikimedia.org/wiki/File:Pluto_TV_logo_2024.svg), and
 [Viki](https://commons.wikimedia.org/wiki/File:Rakuten_Viki_2022.svg).
 
 Build the debug APK with `./gradlew assembleDebug`. Pairing and command behavior should
