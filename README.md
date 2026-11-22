@@ -130,7 +130,7 @@ cd android-tv-remote
 
 The debug APK is at `app/build/outputs/apk/debug/app-debug.apk`. To install it on a connected Android phone, run `adb install -r app/build/outputs/apk/debug/app-debug.apk`. On Windows, use `gradlew.bat` in place of `./gradlew`.
 
-TV discovery uses mDNS. Pairing creates an Android Keystore identity and pins the TV’s TLS certificate for subsequent connections. DataStore holds saved TVs and local preferences.
+TV discovery uses mDNS. New pairings use a unique client certificate and private key stored locally outside Android backups. The app also pins the TV’s TLS certificate for subsequent connections. Existing pairings keep their previous identity until you pair that TV again. DataStore holds saved TVs and local preferences.
 
 ### Versioning
 

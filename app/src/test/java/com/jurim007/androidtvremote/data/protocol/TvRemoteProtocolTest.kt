@@ -157,7 +157,11 @@ class TvRemoteProtocolTest {
 
     @Test
     fun pairingRequestUsesExpectedOuterFieldAndStatus() {
-        val request = TvRemoteProtocol.pairingRequest()
+        val name = "TVControl-unique-client"
+        val request = TvRemoteProtocol.pairingRequest(name)
+        val fields = ProtoWire.parse(checkNotNull(TvRemoteProtocol.remoteField(request, 10)))
+        assertEquals("atvremote", fields.first { it.number == 1 }.bytes?.toString(Charsets.UTF_8))
+        assertEquals(name, fields.first { it.number == 2 }.bytes?.toString(Charsets.UTF_8))
 
         assertEquals(200L, TvRemoteProtocol.pairingStatus(request))
         assertEquals(true, TvRemoteProtocol.hasPairingPayload(request, 10))

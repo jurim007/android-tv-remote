@@ -19,10 +19,10 @@ internal object TvRemoteProtocol {
     const val DIRECTION_END_LONG = 2L
     const val DIRECTION_SHORT = 3L
 
-    fun pairingRequest(): ByteArray {
+    fun pairingRequest(clientName: String): ByteArray {
         val request = ProtoWriter()
             .string(1, "atvremote")
-            .string(2, "TVControl")
+            .string(2, clientName)
             .build()
         return pairingOuter(10, request)
     }

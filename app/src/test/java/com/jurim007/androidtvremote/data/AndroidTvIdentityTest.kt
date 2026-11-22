@@ -1,6 +1,5 @@
 package com.jurim007.androidtvremote.data
 
-import java.io.File
 import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
 import javax.net.ssl.KeyManager
@@ -10,6 +9,8 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -22,12 +23,13 @@ class AndroidTvIdentityTest {
 
     @Test
     fun generatesAndPersistsValidRsaCertificate() {
-        val identity = AndroidTvIdentity(context = null)
+        val storage = tempFolder.newFolder()
+        val identity = AndroidTvIdentity(storage)
         val cert = identity.clientCertificate()
 
         assertNotNull(cert)
         cert.checkValidity()
-        assertEquals("CN=TVControl", cert.subjectX500Principal.name)
+        assertTrue(cert.subjectX500Principal.name.startsWith("CN=TVControl-"))
         assertTrue(cert.publicKey is RSAPublicKey)
         val rsaKey = cert.publicKey as RSAPublicKey
         assertEquals(2048, rsaKey.modulus.bitLength())
@@ -36,16 +38,43 @@ class AndroidTvIdentityTest {
         val cert2 = identity.clientCertificate()
         assertEquals(cert, cert2)
 
-        val keyManagers = identity.keyManagers()
+        val reloaded = AndroidTvIdentity(storage)
+        val keyManagers = reloaded.keyManagers()
+        assertEquals(cert, reloaded.clientCertificate())
         assertNotNull(keyManagers)
         assertTrue(keyManagers.isNotEmpty())
     }
 
     @Test
+    fun twoInstallationsCanKeepSeparateEntriesInATrustStoreIndexedBySubject() {
+        val first = AndroidTvIdentity(tempFolder.newFolder()).clientCertificate()
+        val second = AndroidTvIdentity(tempFolder.newFolder()).clientCertificate()
+
+        assertNotEquals(first.publicKey, second.publicKey)
+        assertNotEquals(first.subjectX500Principal, second.subjectX500Principal)
+        val trusted = listOf(first, second).associateBy { it.subjectX500Principal }
+        assertEquals(first, trusted[first.subjectX500Principal])
+        assertEquals(second, trusted[second.subjectX500Principal])
+    }
+
+    @Test
+    fun reconnectDoesNotReplaceAMissingOrUnreadableIdentity() {
+        val storage = tempFolder.newFolder()
+        val identity = AndroidTvIdentity(storage)
+        assertThrows(MissingTvClientIdentity::class.java) { identity.keyManagers() }
+        assertTrue(storage.listFiles().orEmpty().isEmpty())
+
+        val invalid = storage.resolve("tvcontrol_identity.p12").apply { writeText("invalid identity") }
+        assertThrows(MissingTvClientIdentity::class.java) { identity.keyManagers() }
+        assertEquals("invalid identity", invalid.readText())
+    }
+
+    @Test
     fun executesMutualTlsHandshakeSuccessfully() {
-        val identity = AndroidTvIdentity(context = null)
-        val clientKeyManagers = identity.keyManagers()
+        val storage = tempFolder.newFolder()
+        val identity = AndroidTvIdentity(storage)
         val clientCert = identity.clientCertificate()
+        val clientKeyManagers = AndroidTvIdentity(storage).keyManagers()
 
         var serverReceivedClientCert: X509Certificate? = null
 

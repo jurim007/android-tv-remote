@@ -4,6 +4,7 @@ import android.content.Context
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.OutputStream
 import java.math.BigInteger
 import java.security.KeyPair
@@ -16,96 +17,73 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.UUID
 import javax.net.ssl.KeyManager
 import javax.net.ssl.KeyManagerFactory
 
-internal class AndroidTvIdentity(context: Context? = null) {
-    private val storageDir: File = context?.filesDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")
+internal class MissingTvClientIdentity(cause: Exception? = null) :
+    IOException("The client identity for this pairing is unavailable.", cause)
+
+internal class AndroidTvIdentity(private val storageDir: File) {
     private val lock = Any()
+    private val keyStoreFile = File(storageDir, KEYSTORE_FILENAME)
+    private var cachedIdentity: Pair<X509Certificate, Array<KeyManager>>? = null
 
-    @Volatile
-    private var cachedCertificate: X509Certificate? = null
+    fun clientCertificate(): X509Certificate = getIdentity(allowCreation = true).first
 
-    @Volatile
-    private var cachedKeyManagers: Array<KeyManager>? = null
+    fun keyManagers(allowCreation: Boolean = false): Array<KeyManager> =
+        getIdentity(allowCreation).second
 
-    fun clientCertificate(): X509Certificate = synchronized(lock) {
-        cachedCertificate ?: loadOrGenerateIdentity().first.also { cachedCertificate = it }
+    private fun getIdentity(allowCreation: Boolean): Pair<X509Certificate, Array<KeyManager>> = synchronized(lock) {
+        cachedIdentity ?: loadOrGenerateIdentity(allowCreation).also { cachedIdentity = it }
     }
 
-    fun keyManagers(): Array<KeyManager> = synchronized(lock) {
-        cachedKeyManagers ?: loadOrGenerateIdentity().second.also { cachedKeyManagers = it }
-    }
-
-    private fun loadOrGenerateIdentity(): Pair<X509Certificate, Array<KeyManager>> {
-        cleanupLegacyKeyStore()
-
-        val keyStoreFile = File(storageDir, KEYSTORE_FILENAME)
+    private fun loadOrGenerateIdentity(allowCreation: Boolean): Pair<X509Certificate, Array<KeyManager>> {
         if (keyStoreFile.exists()) {
             try {
                 val keyStore = KeyStore.getInstance("PKCS12")
-                keyStoreFile.inputStream().use { input ->
-                    keyStore.load(input, KEYSTORE_PASSWORD)
-                }
+                keyStoreFile.inputStream().use { keyStore.load(it, KEYSTORE_PASSWORD) }
                 val cert = keyStore.getCertificate(ALIAS) as? X509Certificate
-                val key = keyStore.getKey(ALIAS, KEYSTORE_PASSWORD)
-                if (cert != null && key != null) {
-                    cert.checkValidity()
-                    val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-                    kmf.init(keyStore, KEYSTORE_PASSWORD)
-                    val km = kmf.keyManagers
-                    cachedCertificate = cert
-                    cachedKeyManagers = km
-                    return cert to km
-                }
-            } catch (_: Exception) {
-                keyStoreFile.delete()
+                    ?: throw IOException("The client certificate is missing.")
+                cert.checkValidity()
+                return cert to keyManagers(keyStore)
+            } catch (error: Exception) {
+                if (!allowCreation) throw MissingTvClientIdentity(error)
             }
         }
+        if (!allowCreation) throw MissingTvClientIdentity()
 
         val now = System.currentTimeMillis()
-        val keyPairGenerator = KeyPairGenerator.getInstance("RSA")
-        keyPairGenerator.initialize(RSA_KEY_SIZE)
-        val keyPair = keyPairGenerator.generateKeyPair()
-
-        val notBefore = Date(now - DAY_MILLIS)
-        val notAfter = Date(now + CERTIFICATE_VALIDITY_MILLIS)
-        val certificate = generateSelfSignedCertificate(keyPair, COMMON_NAME, notBefore, notAfter)
-
+        val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(RSA_KEY_SIZE) }.generateKeyPair()
+        val certificate = generateSelfSignedCertificate(
+            keyPair,
+            "TVControl-${UUID.randomUUID()}",
+            Date(now - DAY_MILLIS),
+            Date(now + CERTIFICATE_VALIDITY_MILLIS),
+        )
         val keyStore = KeyStore.getInstance("PKCS12")
         keyStore.load(null, null)
         keyStore.setKeyEntry(ALIAS, keyPair.private, KEYSTORE_PASSWORD, arrayOf(certificate))
+        val managers = keyManagers(keyStore)
 
+        val tempFile = File.createTempFile("tvcontrol_identity-", ".tmp", storageDir)
         try {
-            val tempFile = File(storageDir, "$KEYSTORE_FILENAME.tmp")
             tempFile.outputStream().use { out ->
                 keyStore.store(out, KEYSTORE_PASSWORD)
+                out.fd.sync()
             }
-            if (!tempFile.renameTo(keyStoreFile)) {
-                tempFile.copyTo(keyStoreFile, overwrite = true)
-                tempFile.delete()
-            }
-        } catch (_: Exception) {
-            // Keep in-memory store if write fails
+            if (!tempFile.renameTo(keyStoreFile)) throw IOException("Could not save the TV pairing identity.")
+        } finally {
+            tempFile.delete()
         }
-
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(keyStore, KEYSTORE_PASSWORD)
-        val km = kmf.keyManagers
-
-        cachedCertificate = certificate
-        cachedKeyManagers = km
-        return certificate to km
+        return certificate to managers
     }
 
-    private fun cleanupLegacyKeyStore() {
-        try {
-            val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            if (ks.containsAlias(LEGACY_KEYSTORE_ALIAS)) {
-                ks.deleteEntry(LEGACY_KEYSTORE_ALIAS)
-            }
-        } catch (_: Throwable) {
-            // Handled when AndroidKeyStore is unavailable or already clean
+    private fun keyManagers(keyStore: KeyStore): Array<KeyManager> {
+        if (keyStore.getKey(ALIAS, KEYSTORE_PASSWORD) == null) throw IOException("The client key is missing.")
+        return KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).run {
+            init(keyStore, KEYSTORE_PASSWORD)
+            keyManagers
         }
     }
 
@@ -247,8 +225,6 @@ internal class AndroidTvIdentity(context: Context? = null) {
     private companion object {
         const val KEYSTORE_FILENAME = "tvcontrol_identity.p12"
         const val ALIAS = "tvcontrol_identity"
-        const val LEGACY_KEYSTORE_ALIAS = "tvcontrol_android_tv_remote_identity"
-        const val COMMON_NAME = "TVControl"
         const val RSA_KEY_SIZE = 2048
         val KEYSTORE_PASSWORD = "tvcontrol_identity_keystore_pass".toCharArray()
         const val DAY_MILLIS = 24L * 60L * 60L * 1000L

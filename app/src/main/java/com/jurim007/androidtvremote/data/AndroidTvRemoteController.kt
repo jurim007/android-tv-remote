@@ -53,7 +53,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 class AndroidTvRemoteController(context: Context) : RemoteController {
     private val appContext = context.applicationContext
     private val nsdManager = appContext.getSystemService(NsdManager::class.java)
-    private val identity = AndroidTvIdentity(appContext)
+    private val legacyIdentity = AndroidTvIdentity(appContext.filesDir)
+    private val uniqueIdentity = AndroidTvIdentity(appContext.noBackupFilesDir)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val outgoing = Channel<OutgoingAction>(Channel.BUFFERED)
 
@@ -204,7 +205,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
         var socket: SSLSocket? = null
         try {
-            socket = openTlsSocket(device, TvDevice.PAIRING_PORT, expectedFingerprint = null)
+            val certificateName = uniqueIdentity.clientCertificate().subjectX500Principal.name.removePrefix("CN=")
+            socket = openTlsSocket(device, TvDevice.PAIRING_PORT, expectedFingerprint = null, identity = uniqueIdentity)
             val certificate = socket.session.peerCertificates.firstOrNull() as? X509Certificate
                 ?: throw CertificateException("The TV did not provide an X.509 certificate.")
             val serverKey = certificate.publicKey as? RSAPublicKey
@@ -219,7 +221,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 closePendingPairing()
                 return@withContext
             }
-            writeMessage(socket, TvRemoteProtocol.pairingRequest())
+            writeMessage(socket, TvRemoteProtocol.pairingRequest(certificateName))
             readPairingUntil(socket, 11)
 
             writeMessage(socket, TvRemoteProtocol.pairingOptions())
@@ -256,7 +258,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             val originalDevice = pendingPairingDevice
                 ?: throw IllegalStateException("The pending TV pairing was lost.")
             try {
-                val clientCertificate = identity.clientCertificate()
+                val clientCertificate = uniqueIdentity.clientCertificate()
                 val clientKey = clientCertificate.publicKey as? RSAPublicKey
                     ?: throw CertificateException("The client certificate does not contain an RSA key.")
                 val serverKey = pendingServerKey
@@ -277,6 +279,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     },
                     serverCertificateFingerprint = pendingCertificateFingerprint
                         ?: throw IllegalStateException("The TV certificate fingerprint was not captured."),
+                    usesUniqueClientIdentity = true,
                 )
                 mutableConnectionState.value = TvConnectionState(
                     phase = TvConnectionPhase.DISCONNECTED,
@@ -333,7 +336,8 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private suspend fun openRemoteSession(device: TvDevice, generation: Long) {
         val context = coroutineContext
         context.ensureActive()
-        val socket = openTlsSocket(device, device.port, device.serverCertificateFingerprint)
+        val identity = if (device.usesUniqueClientIdentity) uniqueIdentity else legacyIdentity
+        val socket = openTlsSocket(device, device.port, device.serverCertificateFingerprint, identity)
         var connected = false
         try {
             synchronized(connectionLock) {
@@ -777,6 +781,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         device: TvDevice,
         port: Int,
         expectedFingerprint: String?,
+        identity: AndroidTvIdentity,
     ): SSLSocket {
         val trustManager = PinnedTvTrustManager(expectedFingerprint)
         val sslContext = SSLContext.getInstance("TLS")
@@ -861,11 +866,12 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     }
 
     private fun Throwable.requiresNewPairing(): Boolean = generateSequence(this) { it.cause }.any { cause ->
-        cause is TvCertificateChangedException || (cause is SSLException && cause.message.orEmpty().let {
-            it.contains("alert_certificate_unknown", ignoreCase = true) ||
-                it.contains("alert_bad_certificate", ignoreCase = true) ||
-                it.contains("alert_certificate_required", ignoreCase = true)
-        })
+        cause is MissingTvClientIdentity || cause is TvCertificateChangedException ||
+            (cause is SSLException && cause.message.orEmpty().let {
+                it.contains("alert_certificate_unknown", ignoreCase = true) ||
+                    it.contains("alert_bad_certificate", ignoreCase = true) ||
+                    it.contains("alert_certificate_required", ignoreCase = true)
+            })
     }
 
     private fun setError(message: String, device: TvDevice? = null, needsPairing: Boolean = false) {

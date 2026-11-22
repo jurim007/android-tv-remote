@@ -5,6 +5,7 @@ data class TvDevice(
     val host: String,
     val port: Int = REMOTE_PORT,
     val serverCertificateFingerprint: String? = null,
+    val usesUniqueClientIdentity: Boolean = false,
 ) {
     val id: String
         get() = "$host:$port"

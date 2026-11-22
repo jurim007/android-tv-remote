@@ -16,6 +16,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/tv_data_extraction_rules"
+        android:fullBackupContent="@xml/tv_backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

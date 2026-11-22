@@ -155,7 +155,8 @@ class AppShortcutPreferences(context: Context) {
                             .put("name", device.name)
                             .put("host", device.host)
                             .put("port", device.port)
-                            .put("certificateFingerprint", device.serverCertificateFingerprint),
+                            .put("certificateFingerprint", device.serverCertificateFingerprint)
+                            .put("usesUniqueClientIdentity", device.usesUniqueClientIdentity),
                     )
                 }
             }.toString()
@@ -171,6 +172,7 @@ class AppShortcutPreferences(context: Context) {
                     serverCertificateFingerprint = item
                         .optString("certificateFingerprint")
                         .takeIf(String::isNotBlank),
+                    usesUniqueClientIdentity = item.optBoolean("usesUniqueClientIdentity", false),
                 )
             }
         }
