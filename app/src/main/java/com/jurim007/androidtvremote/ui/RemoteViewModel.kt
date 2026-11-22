@@ -59,11 +59,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         SharingStarted.WhileSubscribed(5_000),
         emptyList(),
     )
-    val selectedTvId = shortcutPreferences.selectedTvId.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
-        null,
-    )
     val discoveredDevices = remoteController.discoveredDevices
     val connectionState = remoteController.connectionState
     val tclInputsTvIds = shortcutPreferences.tclInputsTvIds.stateIn(
@@ -172,10 +167,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun saveShortcuts(shortcuts: List<TvAppShortcut>) {
+    fun saveShortcuts(tvId: String?, shortcuts: List<TvAppShortcut>) {
         viewModelScope.launch {
             try {
-                shortcutPreferences.saveShortcuts(shortcuts)
+                shortcutPreferences.saveShortcuts(tvId, shortcuts)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -212,10 +207,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun restoreRemoteDefaults() {
+    fun restoreRemoteDefaults(tvId: String?) {
         viewModelScope.launch {
             try {
-                shortcutPreferences.restoreRemoteDefaults()
+                shortcutPreferences.restoreRemoteDefaults(tvId)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

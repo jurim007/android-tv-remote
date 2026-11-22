@@ -78,6 +78,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -111,6 +112,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
+import com.jurim007.androidtvremote.data.SelectedTvShortcuts
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
@@ -136,15 +138,18 @@ fun RemoteScreen(
 ) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var connectionDialogMode by rememberSaveable { mutableStateOf<String?>(null) }
-    val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle(initialValue = defaultTvShortcuts)
+    val shortcutScope by viewModel.shortcuts.collectAsStateWithLifecycle(
+        initialValue = SelectedTvShortcuts(null, defaultTvShortcuts),
+    )
+    val shortcuts = shortcutScope.items
+    val shortcutTvId = shortcutScope.tvId
     val options by viewModel.remoteOptions.collectAsStateWithLifecycle()
     val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
     val savedTvs by viewModel.savedTvs.collectAsStateWithLifecycle()
-    val selectedTvId by viewModel.selectedTvId.collectAsStateWithLifecycle()
     val discoveredDevices by viewModel.discoveredDevices.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
-    val selectedTv = savedTvs.firstOrNull { it.id == selectedTvId } ?: connectionState.device
+    val selectedTv = savedTvs.firstOrNull { it.id == shortcutTvId } ?: connectionState.device
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { message ->
@@ -253,10 +258,11 @@ fun RemoteScreen(
                     Spacer(Modifier.height(shortcutGap))
                     AppShortcutsGrid(
                         shortcuts = shortcuts,
+                        tvId = shortcutTvId,
                         onLaunchApp = { shortcut ->
-                            viewModel.send(
-                                RemoteCommand.LaunchApp(shortcut.packageName),
-                            )
+                            if (connectionState.device == null || connectionState.device?.id == shortcutTvId) {
+                                viewModel.send(RemoteCommand.LaunchApp(shortcut.packageName))
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -304,24 +310,26 @@ fun RemoteScreen(
         )
     }
     if (settingsOpen && connectionDialogMode == null) {
-        val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
-        RemoteSettingsDialog(
-            shortcuts = shortcuts,
-            touchpadEnabled = touchpadEnabled,
-            onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
-            options = options,
-            onOptionChange = viewModel::setRemoteOption,
-            checkingForUpdates = updateState.checking,
-            updateCheckStatus = updateState.status,
-            onCheckForUpdates = { viewModel.checkForUpdates(manual = true) },
-            tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
-            onTclInputsChange = viewModel::setTclInputsEnabled,
-            onRestoreDefaults = viewModel::restoreRemoteDefaults,
-            onManageTvs = { connectionDialogMode = "manage" },
-            onShortcutsChange = viewModel::saveShortcuts,
-            connectionState = connectionState,
-            onDismiss = { settingsOpen = false },
-        )
+        key(shortcutTvId) {
+            val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
+            RemoteSettingsDialog(
+                shortcuts = shortcuts,
+                touchpadEnabled = touchpadEnabled,
+                onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
+                options = options,
+                onOptionChange = viewModel::setRemoteOption,
+                checkingForUpdates = updateState.checking,
+                updateCheckStatus = updateState.status,
+                onCheckForUpdates = { viewModel.checkForUpdates(manual = true) },
+                tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
+                onTclInputsChange = viewModel::setTclInputsEnabled,
+                onRestoreDefaults = { viewModel.restoreRemoteDefaults(shortcutTvId) },
+                onManageTvs = { connectionDialogMode = "manage" },
+                onShortcutsChange = { viewModel.saveShortcuts(shortcutTvId, it) },
+                connectionState = connectionState,
+                onDismiss = { settingsOpen = false },
+            )
+        }
     }
     connectionDialogMode?.let { mode ->
         TvConnectionDialog(
@@ -526,6 +534,7 @@ private fun DeviceHeader(
 @Composable
 private fun AppShortcutsGrid(
     shortcuts: List<TvAppShortcut>,
+    tvId: String?,
     onLaunchApp: (TvAppShortcut) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -540,24 +549,26 @@ private fun AppShortcutsGrid(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 row.forEach { shortcut ->
-                    RemoteTapTarget(
-                        description = shortcut.name,
-                        onClick = { onLaunchApp(shortcut) },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = CircleShape,
-                        background = surfaceBrush(),
-                        border = RemoteBorder.copy(alpha = 0.78f),
-                    ) {
-                        ShortcutIcon(
-                            shortcut = shortcut,
-                            modifier = if (shortcut.packageName == "com.amazon.amazonvideo.livingroom" &&
-                                shortcut.iconUri == null
-                            ) {
-                                Modifier.size(width = 56.dp, height = 28.dp)
-                            } else {
-                                Modifier.size(width = 42.dp, height = 25.dp)
-                            },
-                        )
+                    key(tvId, shortcut.packageName) {
+                        RemoteTapTarget(
+                            description = shortcut.name,
+                            onClick = { onLaunchApp(shortcut) },
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            shape = CircleShape,
+                            background = surfaceBrush(),
+                            border = RemoteBorder.copy(alpha = 0.78f),
+                        ) {
+                            ShortcutIcon(
+                                shortcut = shortcut,
+                                modifier = if (shortcut.packageName == "com.amazon.amazonvideo.livingroom" &&
+                                    shortcut.iconUri == null
+                                ) {
+                                    Modifier.size(width = 56.dp, height = 28.dp)
+                                } else {
+                                    Modifier.size(width = 42.dp, height = 25.dp)
+                                },
+                            )
+                        }
                     }
                 }
             }

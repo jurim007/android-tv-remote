@@ -1,6 +1,9 @@
 package com.jurim007.androidtvremote.data
 
 import android.content.Context
+import androidx.datastore.core.DataMigration
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -16,13 +19,22 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val Context.preferencesDataStore by preferencesDataStore(name = "remote_preferences")
+private val Context.preferencesDataStore by preferencesDataStore(
+    name = "remote_preferences",
+    produceMigrations = { listOf(AppShortcutPreferences.shortcutMigration) },
+)
 
-class AppShortcutPreferences(context: Context) {
-    private val dataStore = context.preferencesDataStore
+data class SelectedTvShortcuts(val tvId: String?, val items: List<TvAppShortcut>)
 
-    val shortcuts: Flow<List<TvAppShortcut>> = dataStore.data.map { preferences ->
-        (preferences[TV_APP_SHORTCUTS]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_TV_SHORTCUTS)
+class AppShortcutPreferences internal constructor(private val dataStore: DataStore<Preferences>) {
+    constructor(context: Context) : this(context.preferencesDataStore)
+
+    val shortcuts: Flow<SelectedTvShortcuts> = dataStore.data.map { preferences ->
+        val tvId = preferences[SELECTED_TV_ID]
+        SelectedTvShortcuts(
+            tvId,
+            (preferences[shortcutKey(tvId)]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_TV_SHORTCUTS),
+        )
     }
 
     val touchpadEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
@@ -58,9 +70,11 @@ class AppShortcutPreferences(context: Context) {
         }
     }
 
-    suspend fun saveShortcuts(shortcuts: List<TvAppShortcut>) {
+    suspend fun saveShortcuts(tvId: String?, shortcuts: List<TvAppShortcut>) {
         dataStore.edit { preferences ->
-            preferences[TV_APP_SHORTCUTS] = encodeShortcuts(shortcuts.take(MAX_TV_SHORTCUTS))
+            if (tvId == null || preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty().any { it.id == tvId }) {
+                preferences[shortcutKey(tvId)] = encodeShortcuts(shortcuts.take(MAX_TV_SHORTCUTS))
+            }
         }
     }
 
@@ -70,10 +84,10 @@ class AppShortcutPreferences(context: Context) {
         }
     }
 
-    suspend fun restoreRemoteDefaults() {
+    suspend fun restoreRemoteDefaults(tvId: String?) {
         dataStore.edit { preferences ->
             preferences.remove(TOUCHPAD_ENABLED)
-            preferences.remove(TV_APP_SHORTCUTS)
+            preferences.remove(shortcutKey(tvId))
             preferences.remove(TCL_INPUTS_TV_IDS)
             optionKeys.values.forEach { preferences.remove(it) }
         }
@@ -87,6 +101,14 @@ class AppShortcutPreferences(context: Context) {
             val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
             preferences[SAVED_TVS] =
                 encodeTvDevices(devices.filterNot { it.id == device.id } + device)
+            if (devices.isEmpty()) {
+                val unassigned = shortcutKey(null)
+                val destination = shortcutKey(device.id)
+                if (preferences[destination] == null) {
+                    preferences[unassigned]?.let { preferences[destination] = it }
+                }
+                preferences.remove(unassigned)
+            }
             preferences[SELECTED_TV_ID] = device.id
         }
     }
@@ -115,13 +137,37 @@ class AppShortcutPreferences(context: Context) {
         }
     }
 
-    private companion object {
+    internal companion object {
         val optionKeys = RemoteOption.entries.associateWith { booleanPreferencesKey(it.preferenceKey) }
         val TV_APP_SHORTCUTS = stringPreferencesKey("tv_app_shortcuts")
         val TOUCHPAD_ENABLED = booleanPreferencesKey("touchpad_enabled")
         val SAVED_TVS = stringPreferencesKey("saved_tvs")
         val SELECTED_TV_ID = stringPreferencesKey("selected_tv_id")
         val TCL_INPUTS_TV_IDS = stringSetPreferencesKey("tcl_inputs_tv_ids")
+
+        private val SHORTCUTS_MIGRATED = booleanPreferencesKey("tv_app_shortcuts_migrated")
+
+        private fun shortcutKey(tvId: String?) = stringPreferencesKey(
+            if (tvId == null) "unassigned_tv_app_shortcuts" else "tv_app_shortcuts_for_$tvId",
+        )
+
+        val shortcutMigration = object : DataMigration<Preferences> {
+            override suspend fun shouldMigrate(currentData: Preferences): Boolean =
+                currentData[SHORTCUTS_MIGRATED] != true
+
+            override suspend fun migrate(currentData: Preferences): Preferences =
+                currentData.toMutablePreferences().apply {
+                    currentData[TV_APP_SHORTCUTS]?.let { legacy ->
+                        val tvs = currentData[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
+                        val selected = tvs.firstOrNull { it.id == currentData[SELECTED_TV_ID] }
+                        val destination = shortcutKey((selected ?: tvs.firstOrNull())?.id)
+                        if (this[destination] == null) this[destination] = legacy
+                    }
+                    this[SHORTCUTS_MIGRATED] = true
+                }
+
+            override suspend fun cleanUp() = Unit
+        }
 
         fun encodeShortcuts(shortcuts: List<TvAppShortcut>): String =
             JSONArray().apply {

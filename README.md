@@ -15,7 +15,7 @@
 - Navigate with an on-screen **D-pad** or **swipe pad**, with Back, Home, and power controls.
 - Adjust volume and channels, mute the TV, and open its native Inputs menu on compatible devices.
 - Send text and delete characters in a focused TV text field. Use your phone’s microphone for TV voice search on supported devices.
-- Launch up to eight TV apps from the remote. Shortcuts support name suggestions, bundled logos, custom SVGs, and drag-to-reorder.
+- Launch up to eight apps per TV from the remote. Shortcuts support bundled logos, custom images, and drag-to-reorder.
 - Save multiple TVs and customize which controls appear, whether buttons vibrate, and whether the phone’s volume keys control the TV.
 
 ## Setup guide
@@ -59,7 +59,7 @@ The TV displays a six-character pairing code. Enter the code currently shown on 
 
 Open **Remote settings** from the TV selector. Under **Remote layout**, pick **Button D-pad** or **Swipe pad** and toggle volume, channels, Mute, Source, app shortcuts, and the microphone. The navigation pad expands into the space freed by hidden side controls. With the microphone shown, it stays in place and appears dimmed until a voice-capable TV is connected.
 
-Under **Button behavior**, vibration starts on and phone volume-key control starts off. Enable **Phone volume buttons** to adjust a connected TV that supports volume control. **Restore defaults** asks for confirmation and resets the remote preferences and shortcut list. Paired TVs stay saved.
+Under **Button behavior**, vibration starts on and phone volume-key control starts off. Enable **Phone volume buttons** to adjust a connected TV that supports volume control. **Restore defaults** asks for confirmation and resets the remote preferences and the selected TV’s shortcuts. Paired TVs stay saved.
 
 <p>
   <img src="docs/screenshots/remote-settings.jpg" alt="Remote settings with navigation choices, visibility switches, and phone volume controls" width="230">
@@ -69,14 +69,16 @@ Under **Button behavior**, vibration starts on and phone volume-key control star
 
 ## TV app shortcuts
 
-Go to **Remote settings → Remote layout → TV app shortcuts**. YouTube, Netflix, Prime Video, and Disney+ are included by default. You can save up to eight shortcuts in two rows of up to four, and each row fills the available width.
+Choose a saved TV, then go to **Remote settings → Remote layout → TV app shortcuts**. Each TV has its own list. YouTube, Netflix, Prime Video, and Disney+ are included by default. You can save up to eight shortcuts in two rows of up to four, and each row fills the available width.
 
 1. Tap **Add TV app** and start typing the app name. Select a suggestion to fill in the app name and package ID. For an app outside the catalog, enter the package ID for the version installed on your TV.
-2. Keep the automatically matched logo or provide your own with **Choose SVG** or an HTTPS link to an SVG.
-3. Tap **Add app**. Drag a shortcut’s handle to reorder it, or use **Edit** and **Remove**. **Restore default shortcuts** brings back the four bundled entries after confirmation.
+2. Keep the matched logo, use **Choose image** to import a PNG, JPEG, WebP, or SVG, or use **HTTPS SVG / image link** to paste a direct link. SVGs use the theme’s icon color. Use **Remove image** while editing to return to the matched logo.
+3. Tap **Add app**. Tap a shortcut in settings to **Edit** or **Remove** it, or touch and hold it before dragging to reorder. Removal asks for confirmation. **Restore default shortcuts** brings back the four bundled entries for the current TV.
+
+Existing shared shortcuts move to the selected saved TV, or to the first saved TV if none was selected. If you had no saved TVs, the shortcuts follow the first TV you pair.
 
 <p>
-  <img src="docs/screenshots/manage-shortcuts.jpg" alt="Shortcut list with drag handles, Edit and Remove actions, and an Add TV app button" width="230">
+  <img src="docs/screenshots/manage-shortcuts.jpg" alt="TV app shortcuts settings" width="230">
   <img src="docs/screenshots/shortcut-suggestions.jpg" alt="Typing an app name brings up a DAZN suggestion" width="230">
   <img src="docs/screenshots/add-shortcut.jpg" alt="The selected DAZN suggestion fills the package ID and shows the bundled icon preview" width="230">
 </p>

@@ -1,7 +1,6 @@
 package com.jurim007.androidtvremote.ui
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,11 +11,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -29,7 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,12 +41,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
@@ -78,12 +81,13 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -93,7 +97,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Dialog
@@ -113,7 +118,6 @@ import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
 import com.jurim007.androidtvremote.ui.theme.RemoteSurface
 import com.jurim007.androidtvremote.ui.theme.RemoteText
-import java.io.File
 import java.io.IOException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +143,7 @@ fun RemoteSettingsDialog(
     connectionState: TvConnectionState,
     onDismiss: () -> Unit,
 ) {
+    var removeShortcut by remember { mutableStateOf<TvAppShortcut?>(null) }
     var restoreTarget by rememberSaveable { mutableStateOf<RestoreTarget?>(null) }
     var showShortcuts by rememberSaveable { mutableStateOf(false) }
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
@@ -229,6 +234,14 @@ fun RemoteSettingsDialog(
                     color = RemoteMuted,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (shortcuts.isNotEmpty()) {
+                    Text("Tap a shortcut to edit or remove it.", color = RemoteMuted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (shortcuts.size > 1) {
+                    Text("Touch and hold, then drag to reorder.", color = RemoteMuted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 Spacer(Modifier.height(12.dp))
                 if (shortcuts.isEmpty()) {
                     Text(
@@ -237,17 +250,13 @@ fun RemoteSettingsDialog(
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
                 } else {
-                    if (shortcuts.size > 1) {
-                        Text("Drag the handles to reorder.", color = RemoteMuted,
-                            style = MaterialTheme.typography.bodySmall)
-                    }
                     ReorderableShortcuts(
                         shortcuts = shortcuts,
                         scrollState = scrollState,
                         viewport = viewport,
                         onReorder = onShortcutsChange,
                         onEdit = { editingPackageName = it.packageName },
-                        onRemove = { onShortcutsChange(shortcuts - it) },
+                        onRemove = { removeShortcut = it },
                     )
                 }
                 Spacer(Modifier.height(10.dp))
@@ -349,6 +358,12 @@ fun RemoteSettingsDialog(
             }
         }
     }
+    removeShortcut?.let { shortcut ->
+        ConfirmShortcutRemoval(shortcut, { removeShortcut = null }) {
+            onShortcutsChange(shortcuts.filterNot { it.packageName == shortcut.packageName })
+            removeShortcut = null
+        }
+    }
     restoreTarget?.let { target ->
         val resetRemote = target == RestoreTarget.REMOTE
         AlertDialog(
@@ -357,7 +372,7 @@ fun RemoteSettingsDialog(
             text = {
                 Text(
                     if (resetRemote) {
-                        "This resets the layout and button behavior and replaces your shortcuts with the four defaults. Your paired TVs stay saved."
+                        "This resets the layout and button behavior and replaces the current TV’s shortcuts with the four defaults. Your paired TVs stay saved."
                     } else {
                         "This replaces your shortcuts with the four default apps."
                     },
@@ -646,13 +661,12 @@ private fun AddTvAppForm(
         value = iconLinkField,
         onValueChange = { entered ->
             if (entered.text != iconLinkField.text) {
-                if (entered.text.isNotBlank()) iconUri = null
                 validationMessage = null
             }
             iconLinkField = entered
         },
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("HTTPS SVG icon link (optional)") },
+        label = { Text("HTTPS SVG / image link (optional)") },
         placeholder = { Text("https://example.com/icon.svg") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
@@ -678,28 +692,42 @@ private fun AddTvAppForm(
                 Icon(Icons.Filled.Tv, contentDescription = null, tint = RemoteMuted)
             } else {
                 Image(
-                    bitmap = selectedIconBitmap,
+                    bitmap = selectedIconBitmap.bitmap,
                     contentDescription = "Selected app icon",
-                    colorFilter = ColorFilter.tint(RemoteText),
+                    colorFilter = selectedIconBitmap.tint,
                     modifier = Modifier
                         .size(46.dp)
                         .padding(3.dp),
                 )
             }
         }
-        OutlinedButton(onClick = { imagePicker.launch(arrayOf("image/svg+xml", "application/xml", "text/xml")) }) {
-            Text(if (iconUri == null) "Choose SVG" else "Change SVG")
+        Column {
+            OutlinedButton(
+                enabled = !processingImage,
+                onClick = {
+                    imagePicker.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/svg+xml", "application/xml", "text/xml"))
+                },
+            ) {
+                Text(if (iconUri == null) "Choose image" else "Change image")
+            }
+            if (iconUri != null) {
+                TextButton(enabled = !processingImage, onClick = {
+                    iconUri = null
+                    iconLinkField = TextFieldValue()
+                    iconLoadError = false
+                }) { Text("Remove image") }
+            }
         }
     }
     if (iconLoadError) {
         Text(
-            text = "Could not load that SVG. Choose a valid SVG file.",
+            text = "Could not load the image. Choose a valid PNG, JPEG, WebP, or SVG file.",
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall,
         )
     }
     Text(
-        text = "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Use an HTTPS SVG link or choose an SVG file.",
+        text = "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Choose a PNG, JPEG, WebP, or SVG file, or paste a direct HTTPS link to one.",
         color = RemoteMuted,
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = 8.dp),
@@ -741,7 +769,7 @@ private fun AddTvAppForm(
                     } ->
                         validationMessage = "That package ID is already in your shortcuts."
                     normalizedImageUrl != null && !imageUrlIsHttps ->
-                        validationMessage = "Use a complete HTTPS link to an SVG."
+                        validationMessage = "Use a complete HTTPS link to an image."
                     normalizedImageUrl != null -> scope.launch {
                         processingImage = true
                         validationMessage = null
@@ -757,7 +785,7 @@ private fun AddTvAppForm(
                             )
                         } catch (_: IOException) {
                             validationMessage =
-                                "Couldn't load a valid SVG from that HTTPS link."
+                                "Couldn’t load a PNG, JPEG, WebP, or SVG from that HTTPS link."
                         } finally {
                             processingImage = false
                         }
@@ -797,8 +825,6 @@ private fun ReorderableShortcuts(
     val density = LocalDensity.current
     val rowHeight = with(density) { ShortcutRowHeight.roundToPx().toFloat() }
     val edgeSize = with(density) { 48.dp.toPx() }
-    val handleWidth = with(density) { ShortcutHandleWidth.toPx() }
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var listTop by remember { mutableStateOf(0f) }
     var pendingOrder by remember(shortcuts) { mutableStateOf<List<TvAppShortcut>?>(null) }
     val order = pendingOrder ?: shortcuts
@@ -825,19 +851,15 @@ private fun ReorderableShortcuts(
         Modifier
             .fillMaxWidth()
             .onGloballyPositioned { listTop = it.positionInRoot().y }
-            .pointerInput(order, rowHeight, handleWidth, rtl) {
+            .pointerInput(order, rowHeight) {
                 if (order.size < 2) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val distanceFromStart = if (rtl) size.width - down.position.x else down.position.x
-                    if (distanceFromStart !in 0f..handleWidth) return@awaitEachGesture
                     val origin = (down.position.y / rowHeight).toInt()
                     if (origin !in order.indices) return@awaitEachGesture
                     val startY = down.position.y + listTop
                     val startScroll = scrollState.value
-                    val firstDrag = awaitVerticalTouchSlopOrCancellation(down.id) { change, _ ->
-                        change.consume()
-                    } ?: return@awaitEachGesture
+                    val firstDrag = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                     var active = ShortcutDrag(origin, startY, firstDrag.position.y + listTop, startScroll)
                     drag = active
                     try {
@@ -887,7 +909,7 @@ private fun ReorderableShortcuts(
                 }
                 ShortcutSettingsRow(
                     shortcut = shortcut,
-                    canReorder = order.size > 1,
+                    canOpenMenu = { drag == null },
                     modifier = Modifier
                         .zIndex(if (isDragged) 1f else 0f)
                         .graphicsLayer {
@@ -918,12 +940,11 @@ private fun List<TvAppShortcut>.moveShortcut(from: Int, to: Int): List<TvAppShor
     toMutableList().apply { add(to, removeAt(from)) }
 
 private val ShortcutRowHeight = 58.dp
-private val ShortcutHandleWidth = 44.dp
 
 @Composable
 private fun ShortcutSettingsRow(
     shortcut: TvAppShortcut,
-    canReorder: Boolean,
+    canOpenMenu: () -> Boolean,
     modifier: Modifier,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -934,39 +955,76 @@ private fun ShortcutSettingsRow(
             .height(ShortcutRowHeight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (canReorder) {
-            Box(Modifier.width(ShortcutHandleWidth), contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.DragHandle,
-                    contentDescription = null,
-                    tint = RemoteMuted,
-                    modifier = Modifier.size(22.dp),
-                )
+        var menuOpen by remember { mutableStateOf(false) }
+        var tapPosition by remember { mutableStateOf<Offset?>(null) }
+        var rowSize by remember { mutableStateOf(IntSize.Zero) }
+        Box(Modifier.weight(1f).onSizeChanged { rowSize = it }) {
+            Row(
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+                    .pointerInput(shortcut.packageName) {
+                        awaitEachGesture {
+                            tapPosition = awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Initial,
+                            ).position
+                        }
+                    }
+                    .clickable(
+                        onClickLabel = "Manage ${shortcut.name}",
+                        onClick = { if (canOpenMenu()) menuOpen = true },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ShortcutIcon(shortcut, Modifier.size(36.dp))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(shortcut.name, color = RemoteText, maxLines = 1)
+                    Text(shortcut.packageName, color = RemoteMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                }
             }
-        }
-        ShortcutIcon(shortcut, Modifier.size(36.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-        ) {
-            Text(shortcut.name, color = RemoteText, maxLines = 1)
-            Text(
-                shortcut.packageName,
-                color = RemoteMuted,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-            )
-        }
-        Row {
-            TextButton(onClick = onEdit) {
-                Text("Edit")
-            }
-            TextButton(onClick = onRemove) {
-                Text("Remove")
+            if (menuOpen) {
+                Box(Modifier.absoluteOffset {
+                    val point = tapPosition ?: Offset(rowSize.width / 2f, rowSize.height / 2f)
+                    IntOffset(point.x.roundToInt(), point.y.roundToInt())
+                }.size(0.dp)) {
+                    ShortcutActionsMenu(menuOpen, {
+                        menuOpen = false
+                        tapPosition = null
+                    }, onEdit, onRemove)
+                }
             }
         }
     }
+}
+
+@Composable
+internal fun ShortcutActionsMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(16.dp),
+        containerColor = RemoteSurface,
+        border = BorderStroke(1.dp, RemoteBorder),
+        tonalElevation = 0.dp,
+    ) {
+        DropdownMenuItem(text = { Text("Edit") }, onClick = { onDismiss(); onEdit() })
+        DropdownMenuItem(text = { Text("Remove") }, onClick = { onDismiss(); onRemove() })
+    }
+}
+
+@Composable
+internal fun ConfirmShortcutRemoval(shortcut: TvAppShortcut, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remove ${shortcut.name}?") },
+        text = { Text("This removes the shortcut from this TV.") },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Remove") } },
+    )
 }
 
 @Composable
@@ -980,41 +1038,43 @@ fun ShortcutIcon(
         Icon(Icons.Filled.Tv, contentDescription = null, modifier = modifier, tint = RemoteText)
     } else {
         Image(
-            bitmap = icon,
+            bitmap = icon.bitmap,
             contentDescription = null,
             modifier = modifier,
-            colorFilter = ColorFilter.tint(RemoteText),
+            colorFilter = icon.tint,
         )
     }
 }
 
 private val PACKAGE_ID = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
 
+private data class ShortcutArtwork(val bitmap: ImageBitmap, val tint: ColorFilter?)
+
 @Composable
-private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String): State<ImageBitmap?> {
+private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String): State<ShortcutArtwork?> {
     val context = LocalContext.current
     val asset = shortcutIconAssets[packageName]
-    return produceState<ImageBitmap?>(initialValue = null, iconUri, asset, context) {
+    return produceState<ShortcutArtwork?>(initialValue = null, iconUri, asset, context) {
         value = withContext(Dispatchers.IO) {
-            val customIcon = iconUri?.let { uri -> loadIconBitmap { openIconStream(context, uri.toUri()) } }
-            customIcon ?: asset?.let { loadIconBitmap { context.assets.open("shortcut-icons/$it") } }
+            val customIcon = iconUri?.let { reference ->
+                loadIconBitmap(ShortcutImageDownloader.isRasterReference(reference)) {
+                    ShortcutImageDownloader.openStoredImage(context, reference)
+                }
+            }
+            customIcon ?: asset?.let { loadIconBitmap(false) { context.assets.open("shortcut-icons/$it") } }
         }
     }
 }
 
-private fun loadIconBitmap(openStream: () -> java.io.InputStream?): ImageBitmap? =
+private fun loadIconBitmap(raster: Boolean, openStream: () -> java.io.InputStream?): ShortcutArtwork? =
     try {
-        openStream()?.use { ShortcutImageDownloader.renderSvg(it).asImageBitmap() }
+        openStream()?.use {
+            val bitmap = if (raster) ShortcutImageDownloader.renderRaster(it) else ShortcutImageDownloader.renderSvg(it)
+            ShortcutArtwork(bitmap.asImageBitmap(), if (raster) null else ColorFilter.tint(RemoteText))
+        }
     } catch (_: IOException) {
         null
     } catch (error: SecurityException) {
         Log.w("RemoteSettings", "Shortcut icon permission is no longer available", error)
         null
-    }
-
-private fun openIconStream(context: Context, uri: Uri) =
-    if (uri.scheme == "file") {
-        uri.path?.let(::File)?.inputStream()
-    } else {
-        context.contentResolver.openInputStream(uri)
     }

@@ -49,6 +49,7 @@ android {
         applicationId = "com.jurim007.androidtvremote"
         minSdk = 26
         targetSdk = 36
+        testInstrumentationRunner = "com.jurim007.androidtvremote.data.ShortcutTestRunner"
         versionCode = releaseVersionCode
         versionName = releaseVersion
         buildConfigField("String", "GITHUB_AUTHOR", "\"$githubAuthor\"")
