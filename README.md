@@ -62,14 +62,14 @@ Open **Remote settings** from the TV selector. Switch between **D-pad** and **To
 Under **Button behavior**, vibration starts on and phone volume-key control starts off. Enable **Phone volume buttons** to adjust a connected TV that supports volume control. **Restore defaults** asks for confirmation and resets the remote preferences and the selected TV’s shortcuts. Paired TVs stay saved.
 
 <p>
-  <img src="docs/screenshots/remote-settings.jpg" alt="Remote settings with navigation choices, visibility switches, and phone volume controls" width="230">
+  <img src="docs/screenshots/remote-settings.jpg" alt="Remote settings overview with direct links to layout, shortcuts, button behavior, devices, updates, and app information" width="230">
   <img src="docs/screenshots/remote-single-rocker.jpg" alt="The D-pad expands when only the volume rocker is shown" width="230">
   <img src="docs/screenshots/remote-minimal.jpg" alt="A minimal remote with both side controls and shortcuts hidden" width="230">
 </p>
 
 ## TV app shortcuts
 
-Choose a saved TV, then go to **Remote settings → Remote layout → TV app shortcuts**. Each TV has its own list. YouTube, Netflix, Prime Video, and Disney+ are included by default. You can save up to eight shortcuts in two rows of up to four, and each row fills the available width.
+Choose a saved TV, then go to **Remote settings → TV app shortcuts**. Each TV has its own list. YouTube, Netflix, Prime Video, and Disney+ are included by default. You can save up to eight shortcuts in two rows of up to four, and each row fills the available width.
 
 1. Tap **Add TV app** and start typing the app name. Select a suggestion to fill in the app name and package ID. For an app outside the catalog, enter the package ID for the version installed on your TV.
 2. Keep the matched logo, use **Choose image** to import a PNG, JPEG, WebP, or SVG, or use **HTTPS SVG / image link** to paste a direct link. SVGs use the theme’s icon color. Use **Remove image** while editing to return to the matched logo.

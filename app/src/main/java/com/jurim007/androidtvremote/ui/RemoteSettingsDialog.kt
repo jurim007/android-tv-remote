@@ -37,6 +37,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Tv
@@ -136,11 +144,14 @@ fun RemoteSettingsDialog(
 ) {
     var removeShortcut by remember { mutableStateOf<TvAppShortcut?>(null) }
     var restoreTarget by rememberSaveable { mutableStateOf<RestoreTarget?>(null) }
-    var showShortcuts by rememberSaveable { mutableStateOf(false) }
+    var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
     var addingShortcut by rememberSaveable { mutableStateOf(false) }
     var editingPackageName by rememberSaveable { mutableStateOf<String?>(null) }
     val editingShortcut = shortcuts.firstOrNull { it.packageName == editingPackageName }
-    val scrollState = rememberScrollState()
+    val overviewScroll = rememberScrollState()
+    val scrollState = if (page == null) overviewScroll else key(page, addingShortcut, editingPackageName) {
+        rememberScrollState()
+    }
     var viewport by remember { mutableStateOf(Rect.Zero) }
     val editing = addingShortcut || editingShortcut != null
     val goBack = {
@@ -149,11 +160,10 @@ fun RemoteSettingsDialog(
                 addingShortcut = false
                 editingPackageName = null
             }
-            showShortcuts -> showShortcuts = false
+            page != null -> page = null
             else -> onDismiss()
         }
     }
-    LaunchedEffect(showShortcuts, editing) { scrollState.scrollTo(0) }
     Dialog(
         onDismissRequest = goBack,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -173,181 +183,191 @@ fun RemoteSettingsDialog(
                     RoundedCornerShape(28.dp),
                 )
                 .border(1.dp, RemoteBorder, RoundedCornerShape(28.dp))
-                .padding(22.dp)
-                .onGloballyPositioned { coordinates ->
-                    val topLeft = coordinates.positionInRoot()
-                    viewport = Rect(
-                        offset = topLeft,
-                        size = androidx.compose.ui.geometry.Size(
-                            coordinates.size.width.toFloat(), coordinates.size.height.toFloat(),
-                        ),
-                    )
-                }
-                .verticalScroll(scrollState),
+                .padding(horizontal = 18.dp, vertical = 12.dp),
         ) {
-            Text(
-                text = when {
-                    editingShortcut != null -> "Edit TV app"
-                    addingShortcut -> "Add TV app"
-                    showShortcuts -> "TV app shortcuts"
-                    else -> "Remote settings"
-                },
-                color = RemoteText,
-                style = MaterialTheme.typography.titleLarge,
-            )
-            Spacer(Modifier.height(16.dp))
-            if (addingShortcut || editingShortcut != null) {
-                AddTvAppForm(
-                    existingShortcuts = shortcuts,
-                    initialShortcut = editingShortcut,
-                    onSave = { shortcut ->
-                        val oldPackageName = editingShortcut?.packageName
-                        onShortcutsChange(
-                            if (oldPackageName == null) {
-                                shortcuts + shortcut
-                            } else {
-                                shortcuts.map { existing ->
-                                    if (existing.packageName == oldPackageName) shortcut else existing
-                                }
-                            },
-                        )
-                        addingShortcut = false
-                        editingPackageName = null
-                    },
-                    onCancel = {
-                        addingShortcut = false
-                        editingPackageName = null
-                    },
-                )
-            } else if (showShortcuts) {
-                Text(
-                    text = "Add up to eight shortcuts by app name or package ID.",
-                    color = RemoteMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                if (shortcuts.isNotEmpty()) {
-                    Text("Tap a shortcut to edit or remove it.", color = RemoteMuted,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                if (shortcuts.size > 1) {
-                    Text("Touch and hold, then drag to reorder.", color = RemoteMuted,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                Spacer(Modifier.height(12.dp))
-                if (shortcuts.isEmpty()) {
-                    Text(
-                        text = "No TV apps added yet.",
-                        color = RemoteMuted,
-                        modifier = Modifier.padding(vertical = 8.dp),
-                    )
-                } else {
-                    ReorderableShortcuts(
-                        shortcuts = shortcuts,
-                        scrollState = scrollState,
-                        viewport = viewport,
-                        onReorder = onShortcutsChange,
-                        onEdit = { editingPackageName = it.packageName },
-                        onRemove = { removeShortcut = it },
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = { addingShortcut = true },
-                    enabled = shortcuts.size < MAX_TV_SHORTCUTS,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Text(if (shortcuts.size < MAX_TV_SHORTCUTS) "Add TV app" else "Eight app limit reached")
-                }
-                if (shortcuts != defaultTvShortcuts) {
-                    TextButton(onClick = { restoreTarget = RestoreTarget.SHORTCUTS }) {
-                        Text("Restore default shortcuts")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            ) {
+                if (page != null) {
+                    IconButton(onClick = goBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = RemoteAccent)
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = goBack, modifier = Modifier.align(Alignment.End)) {
-                    Text("Back")
-                }
-            } else {
-                val connectionDescription = when (connectionState.phase) {
-                    TvConnectionPhase.CONNECTED ->
-                        "Connected to ${connectionState.device?.name ?: "TV"}"
-                    TvConnectionPhase.DISCOVERING -> "Searching for TVs"
-                    TvConnectionPhase.CONNECTING -> "Connecting to TV"
-                    TvConnectionPhase.PAIRING -> "Pairing with TV"
-                    TvConnectionPhase.ERROR -> connectionState.message ?: "Connection error"
-                    TvConnectionPhase.DISCONNECTED -> "No TV connected"
-                }
-                SettingsSection("Devices") {
-                    SettingsLink("Manage TVs", connectionDescription, onManageTvs)
-                    if (connectionState.phase == TvConnectionPhase.CONNECTED) {
-                        connectionState.device?.let { tv ->
+                Text(
+                    text = when {
+                        editingShortcut != null -> "Edit TV app"
+                        addingShortcut -> "Add TV app"
+                        else -> page?.title ?: "Remote settings"
+                    },
+                    color = RemoteText,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier.weight(1f, fill = false)
+                    .onGloballyPositioned { coordinates ->
+                        val origin = coordinates.positionInRoot()
+                        viewport = Rect(origin, androidx.compose.ui.geometry.Size(
+                            coordinates.size.width.toFloat(), coordinates.size.height.toFloat(),
+                        ))
+                    }
+                    .verticalScroll(scrollState),
+            ) {
+                if (addingShortcut || editingShortcut != null) {
+                    AddTvAppForm(
+                        existingShortcuts = shortcuts,
+                        initialShortcut = editingShortcut,
+                        onSave = { shortcut ->
+                            val oldPackageName = editingShortcut?.packageName
+                            onShortcutsChange(
+                                if (oldPackageName == null) {
+                                    shortcuts + shortcut
+                                } else {
+                                    shortcuts.map { existing ->
+                                        if (existing.packageName == oldPackageName) shortcut else existing
+                                    }
+                                },
+                            )
+                            addingShortcut = false
+                            editingPackageName = null
+                        },
+                        onCancel = {
+                            addingShortcut = false
+                            editingPackageName = null
+                        },
+                    )
+                } else {
+                    val connectionDescription = when (connectionState.phase) {
+                        TvConnectionPhase.CONNECTED ->
+                            "Connected to ${connectionState.device?.name ?: "TV"}"
+                        TvConnectionPhase.DISCOVERING -> "Searching for TVs"
+                        TvConnectionPhase.CONNECTING -> "Connecting to TV"
+                        TvConnectionPhase.PAIRING -> "Pairing with TV"
+                        TvConnectionPhase.ERROR -> connectionState.message ?: "Connection error"
+                        TvConnectionPhase.DISCONNECTED -> "No TV connected"
+                    }
+                    when (page) {
+                        null -> SettingsOverview(shortcuts.size, connectionDescription) { page = it }
+                        SettingsPage.SHORTCUTS -> {
+                            Text(
+                                text = "Add up to eight shortcuts by app name or package ID.",
+                                color = RemoteMuted,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (shortcuts.isNotEmpty()) {
+                                Text("Tap a shortcut to edit or remove it.", color = RemoteMuted,
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            if (shortcuts.size > 1) {
+                                Text("Touch and hold, then drag to reorder.", color = RemoteMuted,
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            if (shortcuts.isEmpty()) {
+                                Text(
+                                    text = "No TV apps added yet.",
+                                    color = RemoteMuted,
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                )
+                            } else {
+                                ReorderableShortcuts(
+                                    shortcuts = shortcuts,
+                                    scrollState = scrollState,
+                                    viewport = viewport,
+                                    onReorder = onShortcutsChange,
+                                    onEdit = { editingPackageName = it.packageName },
+                                    onRemove = { removeShortcut = it },
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { addingShortcut = true },
+                                enabled = shortcuts.size < MAX_TV_SHORTCUTS,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Filled.Add, contentDescription = null)
+                                Text(if (shortcuts.size < MAX_TV_SHORTCUTS) "Add TV app" else "Eight app limit reached")
+                            }
+                            if (shortcuts != defaultTvShortcuts) {
+                                TextButton(onClick = { restoreTarget = RestoreTarget.SHORTCUTS }) {
+                                    Text("Restore default shortcuts")
+                                }
+                            }
+                        }
+                        SettingsPage.DEVICES -> {
+                            SettingsLink("Manage TVs", connectionDescription, onManageTvs)
+                            if (connectionState.phase == TvConnectionPhase.CONNECTED) {
+                                connectionState.device?.let { tv ->
+                                    SettingsToggle(
+                                        title = "TCL Inputs via AVA Connect",
+                                        detail = "Open the native Inputs panel on ${tv.name}. Requires AVA Connect on the TV.",
+                                        enabled = tclInputsEnabled,
+                                    ) { onTclInputsChange(tv.id, it) }
+                                }
+                            }
+                        }
+                        SettingsPage.LAYOUT -> {
                             SettingsToggle(
-                                title = "TCL Inputs via AVA Connect",
-                                detail = "Open the native Inputs panel on ${tv.name}. Requires AVA Connect on the TV.",
-                                enabled = tclInputsEnabled,
-                            ) { onTclInputsChange(tv.id, it) }
+                                title = "Show Navigation Mode Selector",
+                                detail = "Show or hide the D-pad and Touchpad selector on the home screen.",
+                                enabled = RemoteOption.NAVIGATION_SELECTOR in options,
+                            ) { onOptionChange(RemoteOption.NAVIGATION_SELECTOR, it) }
+                            CONTROL_OPTIONS.forEach { (option, label) ->
+                                SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
+                            }
+                        }
+                        SettingsPage.BEHAVIOR -> {
+                            SettingsToggle(
+                                title = "Phone volume buttons",
+                                detail = "Adjust TV volume with the phone’s volume keys when connected.",
+                                enabled = RemoteOption.PHONE_VOLUME in options,
+                            ) { onOptionChange(RemoteOption.PHONE_VOLUME, it) }
+                            SettingsToggle(
+                                title = "Vibrate on button press",
+                                enabled = RemoteOption.VIBRATION in options,
+                            ) { onOptionChange(RemoteOption.VIBRATION, it) }
+                        }
+                        SettingsPage.ABOUT -> {
+                            AboutRow("Version") {
+                                Text(BuildConfig.VERSION_NAME, color = RemoteText)
+                            }
+                            if (BuildConfig.GITHUB_AUTHOR.isNotEmpty()) {
+                                AboutRow("Author") { GitHubAuthorBadge(BuildConfig.GITHUB_AUTHOR) }
+                            }
+                        }
+                        SettingsPage.UPDATES -> {
+                            SettingsToggle(
+                                title = "Automatic Updates",
+                                detail = "Check GitHub when TVControl opens and allow automatic downloads and installation.",
+                                enabled = RemoteOption.AUTOMATIC_UPDATE_CHECKS in options,
+                            ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_CHECKS, it) }
+                            SettingsToggle(
+                                title = "Automatic Downloads",
+                                detail = "Download updates on unmetered connections.",
+                                enabled = RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS in options,
+                            ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS, it) }
+                            SettingsToggle(
+                                title = "Automatic Installation",
+                                detail = "Install automatically downloaded updates. Android may still ask for confirmation.",
+                                enabled = RemoteOption.AUTOMATIC_UPDATE_INSTALLS in options,
+                            ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_INSTALLS, it) }
+                            SettingsLink(
+                                title = "Check for updates",
+                                detail = when {
+                                    checkingForUpdates -> "Checking GitHub…"
+                                    updateCheckStatus != null -> updateCheckStatus
+                                    else -> "Look for a new release now."
+                                },
+                                onClick = onCheckForUpdates,
+                            )
                         }
                     }
                 }
-                SettingsSection("Remote layout") {
-                    SettingsToggle(
-                        title = "Show Navigation Mode Selector",
-                        detail = "Show or hide the D-pad and Touchpad selector on the home screen.",
-                        enabled = RemoteOption.NAVIGATION_SELECTOR in options,
-                    ) { onOptionChange(RemoteOption.NAVIGATION_SELECTOR, it) }
-                    CONTROL_OPTIONS.forEach { (option, label) ->
-                        SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
-                    }
-                    SettingsLink("TV app shortcuts", "${shortcuts.size} of $MAX_TV_SHORTCUTS shortcuts", {
-                        showShortcuts = true
-                    })
-                }
-                SettingsSection("Button behavior") {
-                    SettingsToggle(
-                        title = "Phone volume buttons",
-                        detail = "Adjust TV volume with the phone’s volume keys when connected.",
-                        enabled = RemoteOption.PHONE_VOLUME in options,
-                    ) { onOptionChange(RemoteOption.PHONE_VOLUME, it) }
-                    SettingsToggle(
-                        title = "Vibrate on button press",
-                        enabled = RemoteOption.VIBRATION in options,
-                    ) { onOptionChange(RemoteOption.VIBRATION, it) }
-                }
-                SettingsSection("About") {
-                    AboutRow("Version") {
-                        Text(BuildConfig.VERSION_NAME, color = RemoteText)
-                    }
-                    if (BuildConfig.GITHUB_AUTHOR.isNotEmpty()) {
-                        AboutRow("Author") { GitHubAuthorBadge(BuildConfig.GITHUB_AUTHOR) }
-                    }
-                }
-                SettingsSection("Updates") {
-                    SettingsToggle(
-                        title = "Automatic Updates",
-                        detail = "Check GitHub when TVControl opens and allow automatic downloads and installation.",
-                        enabled = RemoteOption.AUTOMATIC_UPDATE_CHECKS in options,
-                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_CHECKS, it) }
-                    SettingsToggle(
-                        title = "Automatic Downloads",
-                        detail = "Download updates on unmetered connections.",
-                        enabled = RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS in options,
-                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS, it) }
-                    SettingsToggle(
-                        title = "Automatic Installation",
-                        detail = "Install automatically downloaded updates. Android may still ask for confirmation.",
-                        enabled = RemoteOption.AUTOMATIC_UPDATE_INSTALLS in options,
-                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_INSTALLS, it) }
-                    SettingsLink(
-                        title = "Check for updates",
-                        detail = when {
-                            checkingForUpdates -> "Checking GitHub…"
-                            updateCheckStatus != null -> updateCheckStatus
-                            else -> "Look for a new release now."
-                        },
-                        onClick = onCheckForUpdates,
-                    )
-                }
+            }
+            if (page == null) {
+                Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -405,12 +425,52 @@ private val CONTROL_OPTIONS = listOf(
 )
 
 @Composable
-private fun SettingsSection(title: String, content: @Composable () -> Unit) {
-    Text(title, color = RemoteAccent, style = MaterialTheme.typography.titleSmall)
-    Spacer(Modifier.height(4.dp))
-    content()
-    HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
-    Spacer(Modifier.height(14.dp))
+private fun SettingsOverview(shortcutCount: Int, connectionDescription: String, onOpen: (SettingsPage) -> Unit) {
+    val summaries = mapOf(
+        SettingsPage.LAYOUT to "Choose which controls appear",
+        SettingsPage.SHORTCUTS to "$shortcutCount of $MAX_TV_SHORTCUTS shortcuts",
+        SettingsPage.BEHAVIOR to "Phone volume keys and vibration",
+        SettingsPage.DEVICES to connectionDescription,
+        SettingsPage.UPDATES to "Automatic updates and manual checks",
+        SettingsPage.ABOUT to "Version ${BuildConfig.VERSION_NAME}",
+    )
+    SettingsPage.entries.chunked(3).forEachIndexed { group, pages ->
+        if (group > 0) Spacer(Modifier.height(12.dp))
+        Column(
+            Modifier.clip(RoundedCornerShape(18.dp))
+                .background(RemoteSurface)
+                .border(1.dp, RemoteBorder.copy(alpha = 0.55f), RoundedCornerShape(18.dp)),
+        ) {
+            pages.forEachIndexed { index, destination ->
+                if (index > 0) HorizontalDivider(
+                    modifier = Modifier.padding(start = 54.dp, end = 14.dp),
+                    color = RemoteBorder.copy(alpha = 0.38f),
+                )
+                Row(
+                    Modifier.fillMaxWidth().clickable { onOpen(destination) }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(destination.icon, null, Modifier.size(23.dp), tint = RemoteAccent)
+                    Column(Modifier.weight(1f)) {
+                        Text(destination.title, color = RemoteText, style = MaterialTheme.typography.titleMedium)
+                        Text(summaries.getValue(destination), color = RemoteMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = RemoteMuted)
+                }
+            }
+        }
+    }
+}
+
+private enum class SettingsPage(val title: String, val icon: ImageVector) {
+    LAYOUT("Remote layout", Icons.Filled.Gamepad),
+    SHORTCUTS("TV app shortcuts", Icons.Filled.Apps),
+    BEHAVIOR("Button behavior", Icons.Filled.Tune),
+    DEVICES("Devices", Icons.Filled.Tv),
+    UPDATES("Updates", Icons.Filled.SystemUpdate),
+    ABOUT("About", Icons.Filled.Info),
 }
 
 @Composable
@@ -470,7 +530,7 @@ private fun SettingsToggle(
             .fillMaxWidth()
             .toggleable(value = enabled, role = Role.Switch, onValueChange = onChange)
             .heightIn(min = 48.dp)
-            .padding(vertical = 6.dp),
+            .padding(vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

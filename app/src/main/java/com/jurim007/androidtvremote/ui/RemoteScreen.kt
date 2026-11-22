@@ -86,6 +86,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -325,24 +326,27 @@ internal fun RemoteScreen(
                     .padding(bottom = 8.dp),
         )
     }
-    if (settingsOpen && connectionDialogMode == null) {
-        key(shortcutTvId) {
-            val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
-            RemoteSettingsDialog(
-                shortcuts = shortcuts,
-                options = options,
-                onOptionChange = viewModel::setRemoteOption,
-                checkingForUpdates = updateState.checking,
-                updateCheckStatus = updateState.status,
-                onCheckForUpdates = { viewModel.checkForUpdates(manual = true) },
-                tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
-                onTclInputsChange = viewModel::setTclInputsEnabled,
-                onRestoreDefaults = { viewModel.restoreRemoteDefaults(shortcutTvId) },
-                onManageTvs = { connectionDialogMode = "manage" },
-                onShortcutsChange = { viewModel.saveShortcuts(shortcutTvId, it) },
-                connectionState = connectionState,
-                onDismiss = { settingsOpen = false },
-            )
+    if (settingsOpen) {
+        val settingsState = rememberSaveableStateHolder()
+        if (connectionDialogMode == null) {
+            settingsState.SaveableStateProvider(shortcutTvId.orEmpty()) {
+                val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
+                RemoteSettingsDialog(
+                    shortcuts = shortcuts,
+                    options = options,
+                    onOptionChange = viewModel::setRemoteOption,
+                    checkingForUpdates = updateState.checking,
+                    updateCheckStatus = updateState.status,
+                    onCheckForUpdates = { viewModel.checkForUpdates(manual = true) },
+                    tclInputsEnabled = connectionState.device?.id in tclInputsTvIds,
+                    onTclInputsChange = viewModel::setTclInputsEnabled,
+                    onRestoreDefaults = { viewModel.restoreRemoteDefaults(shortcutTvId) },
+                    onManageTvs = { connectionDialogMode = "manage" },
+                    onShortcutsChange = { viewModel.saveShortcuts(shortcutTvId, it) },
+                    connectionState = connectionState,
+                    onDismiss = { settingsOpen = false },
+                )
+            }
         }
     }
     connectionDialogMode?.let { mode ->
