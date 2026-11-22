@@ -6,6 +6,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -14,7 +15,9 @@ import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
+import java.io.IOException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,26 +29,39 @@ private val Context.preferencesDataStore by preferencesDataStore(
 
 data class SelectedTvShortcuts(val tvId: String?, val items: List<TvAppShortcut>)
 
+internal data class RemoteLayoutPreferences(
+    val shortcuts: SelectedTvShortcuts,
+    val touchpadEnabled: Boolean,
+    val options: Set<RemoteOption>,
+    val savedTvs: List<TvDevice>,
+)
+
 class AppShortcutPreferences internal constructor(private val dataStore: DataStore<Preferences>) {
     constructor(context: Context) : this(context.preferencesDataStore)
 
-    val shortcuts: Flow<SelectedTvShortcuts> = dataStore.data.map { preferences ->
-        val tvId = preferences[SELECTED_TV_ID]
-        SelectedTvShortcuts(
-            tvId,
-            (preferences[shortcutKey(tvId)]?.let(::decodeShortcuts) ?: defaultTvShortcuts).take(MAX_TV_SHORTCUTS),
-        )
-    }
+    internal val remoteLayout: Flow<RemoteLayoutPreferences> = dataStore.data
+        .catch { error ->
+            if (error !is IOException) throw error
+            emit(emptyPreferences())
+        }
+        .map { preferences ->
+            val tvId = preferences[SELECTED_TV_ID]
+            val shortcuts = preferences[shortcutKey(tvId)]?.let(::decodeShortcuts) ?: defaultTvShortcuts
+            RemoteLayoutPreferences(
+                shortcuts = SelectedTvShortcuts(tvId, shortcuts.take(MAX_TV_SHORTCUTS)),
+                touchpadEnabled = preferences[TOUCHPAD_ENABLED] ?: false,
+                options = readRemoteOptions(preferences),
+                savedTvs = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty(),
+            )
+        }
 
-    val touchpadEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[TOUCHPAD_ENABLED] ?: false
-    }
+    val shortcuts: Flow<SelectedTvShortcuts> = remoteLayout.map { it.shortcuts }
+    val remoteOptions: Flow<Set<RemoteOption>> = dataStore.data.map(::readRemoteOptions)
 
-    val remoteOptions: Flow<Set<RemoteOption>> = dataStore.data.map { preferences ->
+    private fun readRemoteOptions(preferences: Preferences): Set<RemoteOption> =
         RemoteOption.entries.filter { option ->
             preferences[optionKeys.getValue(option)] ?: option.enabledByDefault
         }.toSet()
-    }
 
     suspend fun setRemoteOption(option: RemoteOption, enabled: Boolean) {
         dataStore.edit { preferences -> preferences[optionKeys.getValue(option)] = enabled }

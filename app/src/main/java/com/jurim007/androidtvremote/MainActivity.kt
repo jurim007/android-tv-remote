@@ -2,15 +2,19 @@ package com.jurim007.androidtvremote
 
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.ui.RemoteViewModel
 import com.jurim007.androidtvremote.ui.RemoteScreen
@@ -32,9 +36,27 @@ class MainActivity : ComponentActivity() {
         }
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
 
+        // Keep the launch window until Compose has applied the saved layout.
+        var remoteReady = false
+        val decorView = window.decorView
+        decorView.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!remoteReady) return false
+                decorView.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
         setContent {
             AndroidTvRemoteTheme {
-                RemoteScreen(modifier = Modifier.fillMaxSize(), viewModel = remoteViewModel)
+                val layout by remoteViewModel.remoteLayout.collectAsStateWithLifecycle()
+                layout?.let { savedLayout ->
+                    RemoteScreen(
+                        layout = savedLayout,
+                        viewModel = remoteViewModel,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    SideEffect { remoteReady = true }
+                }
             }
         }
     }

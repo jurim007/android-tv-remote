@@ -7,8 +7,10 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.domain.defaultTvShortcuts
@@ -37,6 +39,8 @@ class ShortcutTestRunner : Instrumentation() {
                 report.appendLine("PASS per-TV switching, editing, ordering, restart and one-time migration")
                 checkUnassignedShortcuts()
                 report.appendLine("PASS migration without a saved TV")
+                checkNavigationPreferences()
+                report.appendLine("PASS saved layout on first read, existing navigation preference and independent visibility")
             }
         }
         result.exceptionOrNull()?.let { report.appendLine(it.stackTraceToString()) }
@@ -159,6 +163,48 @@ class ShortcutTestRunner : Instrumentation() {
             check(preferences.shortcuts.first().items == defaultTvShortcuts)
         }
         file.delete()
+    }
+
+    private suspend fun checkNavigationPreferences() {
+        val file = File.createTempFile("remote-navigation-", ".preferences_pb", targetContext.cacheDir)
+        file.delete()
+        val tv = TvDevice("Living Room", "living-room", serverCertificateFingerprint = "pin")
+        val shortcuts = listOf(TvAppShortcut("Custom", "com.example.custom"))
+        try {
+            withPreferences(file, migrate = false) { store ->
+                store.edit { it[booleanPreferencesKey("touchpad_enabled")] = true }
+            }
+            withPreferences(file) { store ->
+                val preferences = AppShortcutPreferences(store)
+                val layout = preferences.remoteLayout.first()
+                check(layout.touchpadEnabled)
+                check(RemoteOption.NAVIGATION_SELECTOR in layout.options)
+                preferences.saveTv(tv)
+                preferences.saveShortcuts(tv.id, shortcuts)
+                preferences.setRemoteOption(RemoteOption.NAVIGATION_SELECTOR, false)
+                preferences.setRemoteOption(RemoteOption.VOLUME, false)
+            }
+            withPreferences(file) { store ->
+                val preferences = AppShortcutPreferences(store)
+                val layout = preferences.remoteLayout.first()
+                check(layout.touchpadEnabled)
+                check(RemoteOption.NAVIGATION_SELECTOR !in layout.options)
+                check(RemoteOption.VOLUME !in layout.options)
+                check(layout.shortcuts == SelectedTvShortcuts(tv.id, shortcuts))
+                check(layout.savedTvs == listOf(tv))
+                preferences.setRemoteOption(RemoteOption.NAVIGATION_SELECTOR, true)
+                check(preferences.remoteLayout.first().touchpadEnabled)
+                preferences.setTouchpadEnabled(false)
+            }
+            withPreferences(file) { store ->
+                val preferences = AppShortcutPreferences(store)
+                val layout = preferences.remoteLayout.first()
+                check(!layout.touchpadEnabled)
+                check(RemoteOption.NAVIGATION_SELECTOR in layout.options)
+            }
+        } finally {
+            file.delete()
+        }
     }
 
     private suspend fun withPreferences(

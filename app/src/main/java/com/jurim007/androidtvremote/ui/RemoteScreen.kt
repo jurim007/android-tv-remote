@@ -6,6 +6,7 @@ import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -35,6 +36,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -48,6 +51,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
@@ -89,6 +93,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -103,6 +108,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,9 +116,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.content.ContextCompat
-import com.jurim007.androidtvremote.data.SelectedTvShortcuts
+import kotlin.math.roundToInt
+import com.jurim007.androidtvremote.data.RemoteLayoutPreferences
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
@@ -120,7 +126,6 @@ import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.domain.TvDevice
-import com.jurim007.androidtvremote.domain.defaultTvShortcuts
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -132,20 +137,18 @@ import kotlin.math.abs
 private val SurfaceShape = RoundedCornerShape(34.dp)
 
 @Composable
-fun RemoteScreen(
+internal fun RemoteScreen(
+    layout: RemoteLayoutPreferences,
+    viewModel: RemoteViewModel,
     modifier: Modifier = Modifier,
-    viewModel: RemoteViewModel = viewModel(),
 ) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var connectionDialogMode by rememberSaveable { mutableStateOf<String?>(null) }
-    val shortcutScope by viewModel.shortcuts.collectAsStateWithLifecycle(
-        initialValue = SelectedTvShortcuts(null, defaultTvShortcuts),
-    )
-    val shortcuts = shortcutScope.items
-    val shortcutTvId = shortcutScope.tvId
-    val options by viewModel.remoteOptions.collectAsStateWithLifecycle()
-    val touchpadEnabled by viewModel.touchpadEnabled.collectAsStateWithLifecycle(initialValue = false)
-    val savedTvs by viewModel.savedTvs.collectAsStateWithLifecycle()
+    val shortcuts = layout.shortcuts.items
+    val shortcutTvId = layout.shortcuts.tvId
+    val options = layout.options
+    val touchpadEnabled = layout.touchpadEnabled
+    val savedTvs = layout.savedTvs
     val discoveredDevices by viewModel.discoveredDevices.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
@@ -219,6 +222,7 @@ fun RemoteScreen(
     ) {
         // Keep IME-driven height changes from reflowing the controls behind dialogs.
         val layoutHeight = remember(maxWidth) { maxHeight }
+        val selectorWidth = (maxWidth * 0.7f).coerceIn(220.dp, 282.dp).coerceAtMost(maxWidth)
         val sideWidth = (maxWidth * 0.18f).coerceIn(56.dp, 72.dp)
         val dpadHeight = (maxWidth * 0.73f)
             .coerceAtMost(layoutHeight * 0.36f)
@@ -266,7 +270,15 @@ fun RemoteScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(Modifier.height(shortcutGap))
+                }
+                if (RemoteOption.NAVIGATION_SELECTOR in options) {
+                    Spacer(Modifier.height(shortcutGap * 0.6f))
+                    NavigationModeSelector(
+                        touchpadEnabled = touchpadEnabled,
+                        onModeChange = viewModel::setTouchpadEnabled,
+                        modifier = Modifier.width(selectorWidth),
+                    )
+                    Spacer(Modifier.height(shortcutGap * 0.4f))
                 } else {
                     Spacer(Modifier.height(shortcutGap))
                 }
@@ -314,8 +326,6 @@ fun RemoteScreen(
             val tclInputsTvIds by viewModel.tclInputsTvIds.collectAsStateWithLifecycle()
             RemoteSettingsDialog(
                 shortcuts = shortcuts,
-                touchpadEnabled = touchpadEnabled,
-                onTouchpadEnabledChange = viewModel::setTouchpadEnabled,
                 options = options,
                 onOptionChange = viewModel::setRemoteOption,
                 checkingForUpdates = updateState.checking,
@@ -576,6 +586,83 @@ private fun AppShortcutsGrid(
     }
 }
 
+private const val NavigationAnimationMillis = 210
+
+@Composable
+private fun NavigationModeSelector(
+    touchpadEnabled: Boolean,
+    onModeChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val position by animateFloatAsState(
+        targetValue = if (touchpadEnabled) 1f else 0f,
+        animationSpec = tween(NavigationAnimationMillis),
+        label = "navigation selector position",
+    )
+    BoxWithConstraints(
+        modifier.height(48.dp)
+            .clip(CircleShape)
+            .background(surfaceBrush())
+            .border(1.dp, RemoteBorder, CircleShape)
+            .selectableGroup(),
+    ) {
+        val halfWidth = maxWidth / 2
+        val highlightInset = 3.dp
+        Box(
+            Modifier
+                .offset { IntOffset((halfWidth.toPx() * position).roundToInt(), 0) }
+                .fillMaxHeight()
+                .width(halfWidth)
+                .padding(highlightInset)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF454377), Color(0xFF302F57)),
+                    ),
+                    CircleShape,
+                )
+                .border(
+                    1.dp,
+                    RemoteAccent.copy(alpha = 0.65f),
+                    CircleShape,
+                ),
+        )
+        Row(Modifier.fillMaxSize()) {
+            listOf(false, true).forEach { isTouchpad ->
+                val selected = touchpadEnabled == isTouchpad
+                val emphasis by animateColorAsState(
+                    targetValue = if (selected) RemoteText else RemoteMuted,
+                    animationSpec = tween(NavigationAnimationMillis),
+                    label = "navigation option emphasis",
+                )
+                Row(
+                    modifier = Modifier.weight(1f).fillMaxHeight().clip(CircleShape).selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { if (!selected) onModeChange(isTouchpad) },
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (isTouchpad) Icons.Filled.TouchApp else Icons.Filled.Gamepad,
+                        contentDescription = null,
+                        tint = emphasis,
+                        modifier = Modifier.size(21.dp),
+                    )
+                    Text(
+                        if (isTouchpad) "Touchpad" else "D-pad",
+                        color = emphasis,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun RemoteControls(
     viewModel: RemoteViewModel,
@@ -611,20 +698,27 @@ private fun RemoteControls(
                     modifier = Modifier.fillMaxHeight(),
                 )
             }
-            if (touchpadEnabled) {
-                Touchpad(
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                )
-            } else {
-                DPad(
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                )
+            val padEntrance = remember { Animatable(1f) }
+            var lastMode by remember { mutableStateOf(touchpadEnabled) }
+            LaunchedEffect(touchpadEnabled) {
+                if (lastMode != touchpadEnabled) {
+                    lastMode = touchpadEnabled
+                    padEntrance.snapTo(0f)
+                    padEntrance.animateTo(1f, tween(NavigationAnimationMillis))
+                }
+            }
+            Box(
+                Modifier.weight(1f).fillMaxHeight().graphicsLayer {
+                    alpha = 0.3f + padEntrance.value * 0.7f
+                    scaleX = 0.98f + padEntrance.value * 0.02f
+                    scaleY = scaleX
+                },
+            ) {
+                if (touchpadEnabled) {
+                    Touchpad(viewModel, Modifier.fillMaxSize())
+                } else {
+                    DPad(viewModel, Modifier.fillMaxSize())
+                }
             }
             if (showChannel) {
                 SideControl(

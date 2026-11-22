@@ -49,15 +49,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val mutableVoiceState = MutableStateFlow(VoiceState.IDLE)
     internal val voiceState = mutableVoiceState.asStateFlow()
 
-    val shortcuts = shortcutPreferences.shortcuts
-    val touchpadEnabled = shortcutPreferences.touchpadEnabled
-    val remoteOptions = shortcutPreferences.remoteOptions.stateIn(
-        viewModelScope, SharingStarted.Eagerly, RemoteOption.defaults,
-    )
-    val savedTvs = shortcutPreferences.savedTvs.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
-        emptyList(),
+    internal val remoteLayout = shortcutPreferences.remoteLayout.stateIn(
+        viewModelScope, SharingStarted.Eagerly, null,
     )
     val discoveredDevices = remoteController.discoveredDevices
     val connectionState = remoteController.connectionState
@@ -222,13 +215,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun canUsePhoneVolume(): Boolean {
         val state = connectionState.value
         val required = TvRemoteProtocol.FEATURE_KEY or TvRemoteProtocol.FEATURE_VOLUME
-        return RemoteOption.PHONE_VOLUME in remoteOptions.value &&
+        return RemoteOption.PHONE_VOLUME in remoteLayout.value?.options.orEmpty() &&
             state.phase == TvConnectionPhase.CONNECTED &&
             state.supportedFeatures and required == required
     }
 
     fun startVoice() {
-        if (voiceJob?.isCompleted == false || RemoteOption.MICROPHONE !in remoteOptions.value) return
+        if (voiceJob?.isCompleted == false || RemoteOption.MICROPHONE !in remoteLayout.value?.options.orEmpty()) return
         val stop = CompletableDeferred<Unit>()
         stopRecording = stop
         mutableVoiceState.value = VoiceState.STARTING

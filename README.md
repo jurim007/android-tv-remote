@@ -50,14 +50,14 @@ The TV displays a six-character pairing code. Enter the code currently shown on 
 | Control | How it works |
 | --- | --- |
 | **Button D-pad** | Tap an arrow to move once, or hold it to repeat. Tap **OK** to select. |
-| **Swipe pad** | Swipe to move, swipe and hold to repeat, or tap to select. |
+| **Touchpad** | Swipe to move, swipe and hold to repeat, or tap to select. |
 | **Type** | Focus a text field on the TV and open **Type** on your phone. **Send text** transfers text and keeps the dialog open. **Enter** sends any draft, runs the TV field’s action (such as Search or Done) when available, and closes the dialog. The delete icon erases a character on the TV. |
 | **Microphone** | Tap the mic between Back and Home, grant microphone access if prompted, and speak. TVControl sends the audio to the paired TV for processing. Tap **Stop** to finish. Recording also stops when you leave the remote or after 20 seconds. |
 | **Source** | Opens the TV’s native Inputs panel where supported. Navigate with the D-pad or swipe pad and select an input. See the [TCL setup](#source-on-tcl-tvs) if your TV ignores the standard Source key. |
 
 ### Customize the layout
 
-Open **Remote settings** from the TV selector. Under **Remote layout**, pick **Button D-pad** or **Swipe pad** and toggle volume, channels, Mute, Source, app shortcuts, and the microphone. The navigation pad expands into the space freed by hidden side controls. With the microphone shown, it stays in place and appears dimmed until a voice-capable TV is connected.
+Open **Remote settings** from the TV selector. Switch between **D-pad** and **Touchpad** on the home screen. In **Remote settings → Remote layout**, turn off **Show Navigation Mode Selector** to hide the selector while keeping the current mode. You can also toggle volume, channels, Mute, Source, app shortcuts, and the microphone. The navigation pad expands into the space freed by hidden side controls. With the microphone shown, it stays in place and appears dimmed until a voice-capable TV is connected.
 
 Under **Button behavior**, vibration starts on and phone volume-key control starts off. Enable **Phone volume buttons** to adjust a connected TV that supports volume control. **Restore defaults** asks for confirmation and resets the remote preferences and the selected TV’s shortcuts. Paired TVs stay saved.
 

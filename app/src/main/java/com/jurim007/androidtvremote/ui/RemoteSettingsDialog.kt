@@ -21,7 +21,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,12 +36,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Gamepad
-import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
@@ -80,7 +75,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -93,7 +87,6 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -128,8 +121,6 @@ import kotlinx.coroutines.withContext
 @Composable
 fun RemoteSettingsDialog(
     shortcuts: List<TvAppShortcut>,
-    touchpadEnabled: Boolean,
-    onTouchpadEnabledChange: (Boolean) -> Unit,
     options: Set<RemoteOption>,
     onOptionChange: (RemoteOption, Boolean) -> Unit,
     checkingForUpdates: Boolean,
@@ -300,10 +291,11 @@ fun RemoteSettingsDialog(
                     }
                 }
                 SettingsSection("Remote layout") {
-                    NavigationStylePicker(
-                        touchpadEnabled = touchpadEnabled,
-                        onChange = onTouchpadEnabledChange,
-                    )
+                    SettingsToggle(
+                        title = "Show Navigation Mode Selector",
+                        detail = "Show or hide the D-pad and Touchpad selector on the home screen.",
+                        enabled = RemoteOption.NAVIGATION_SELECTOR in options,
+                    ) { onOptionChange(RemoteOption.NAVIGATION_SELECTOR, it) }
                     CONTROL_OPTIONS.forEach { (option, label) ->
                         SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
                     }
@@ -392,64 +384,6 @@ fun RemoteSettingsDialog(
 }
 
 private enum class RestoreTarget { REMOTE, SHORTCUTS }
-
-@Composable
-private fun NavigationStylePicker(touchpadEnabled: Boolean, onChange: (Boolean) -> Unit) {
-    Text("Navigation style", color = RemoteText, style = MaterialTheme.typography.titleSmall)
-    Spacer(Modifier.height(8.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        NavigationStyleCard(
-            title = "Button D-pad",
-            detail = "Use arrows and OK",
-            icon = Icons.Filled.Gamepad,
-            selected = !touchpadEnabled,
-            onClick = { onChange(false) },
-            modifier = Modifier.weight(1f),
-        )
-        NavigationStyleCard(
-            title = "Swipe pad",
-            detail = "Swipe to move, tap to select",
-            icon = Icons.Filled.TouchApp,
-            selected = touchpadEnabled,
-            onClick = { onChange(true) },
-            modifier = Modifier.weight(1f),
-        )
-    }
-    Spacer(Modifier.height(8.dp))
-}
-
-@Composable
-private fun NavigationStyleCard(
-    title: String,
-    detail: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(18.dp)
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .clip(shape)
-            .background(if (selected) RemoteAccent.copy(alpha = 0.13f) else RemoteSurface)
-            .border(if (selected) 2.dp else 1.dp, if (selected) RemoteAccent else RemoteBorder, shape)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(icon, contentDescription = null, tint = if (selected) RemoteAccent else RemoteMuted,
-            modifier = Modifier.size(27.dp))
-        Spacer(Modifier.height(8.dp))
-        Text(title, color = RemoteText, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(4.dp))
-        Text(detail, color = RemoteMuted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-    }
-}
 
 private val CONTROL_OPTIONS = listOf(
     RemoteOption.VOLUME to "Show volume buttons",
