@@ -105,13 +105,17 @@ On the tested **TCL 55P69K**, the firmware ignores the standard Source key over 
 
 ## App updates
 
-TVControl checks GitHub for a newer stable release when you open the app. When an
-update is available, tap **Update** to download it, then confirm the installation
-in Android’s installer. Android may first ask you to allow installs from TVControl.
+TVControl checks GitHub for stable releases on launch. In **Remote settings → Updates**,
+**Automatic Updates** controls launch checks and automation. **Automatic Downloads**
+uses validated, unmetered connections and resumes interrupted downloads when GitHub
+supports it. **Automatic Installation** asks Android to install automatically downloaded
+updates. Both extra options are off by default. **Check for updates** is always available.
 
-Under **Remote settings → Updates**, you can turn off automatic checks or tap
-**Check for updates** at any time. Updates between APKs signed with the same key
-keep your paired TVs and settings.
+The first installation through TVControl may require enabling **Allow from this
+source** in Android settings. On Android 12 and later, TVControl can request a
+self-update without confirmation. Android may still ask you to confirm or block
+the install according to its security settings. Android 8–11 use system
+confirmation. In-place updates preserve your paired TVs and settings.
 
 ## Roadmap
 
@@ -137,6 +141,20 @@ TV discovery uses mDNS. New pairings use a unique client certificate and private
 ### Versioning
 
 Use GitHub release tags in the form `vMAJOR.MINOR.PATCH`, starting with `v1.0.0`. Major releases cover substantial changes such as a new TV platform, minor releases introduce features, and patches cover fixes and small UI changes. Build the APK from the release tag before attaching it to GitHub Releases.
+
+Publish the signed `TVControl-vMAJOR.MINOR.PATCH.apk` and its
+`.apk.integrity` companion together. Generate the companion locally after signing
+the APK, using the same release keystore and a file containing its passphrase.
+
+```bash
+java tools/SignUpdateIntegrity.java "$APK" com.jurim007.androidtvremote "$KEYSTORE" "$PASSWORD_FILE"
+```
+
+The companion authenticates the APK’s SHA-256, size, version, and package name.
+TVControl verifies it against the currently installed signing certificate.
+Keep the release key and passphrase out of GitHub Releases. Older releases
+remain downloadable, and the improved updater requires the signed companion
+for any release it installs.
 
 The **About** section displays the version embedded at build time and a GitHub author badge. Gradle reads the workflow’s tag and repository owner in GitHub Actions. Local builds use the latest reachable version tag and the owner of the GitHub `origin` remote. The fallback version is `1.0.0`. For a local override, use `-PreleaseVersion=1.2.3`.
 

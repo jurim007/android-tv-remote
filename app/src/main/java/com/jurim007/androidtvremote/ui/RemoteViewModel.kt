@@ -8,8 +8,11 @@ import androidx.lifecycle.viewModelScope
 import com.jurim007.androidtvremote.data.AndroidTvRemoteController
 import com.jurim007.androidtvremote.data.AppShortcutPreferences
 import com.jurim007.androidtvremote.data.AppUpdate
+import com.jurim007.androidtvremote.data.AppUpdateInstaller
 import com.jurim007.androidtvremote.data.GitHubAppUpdates
 import com.jurim007.androidtvremote.data.UpdateSignatureMismatch
+import com.jurim007.androidtvremote.data.UpdateVerificationFailed
+import com.jurim007.androidtvremote.data.VerifiedUpdate
 import com.jurim007.androidtvremote.domain.PressAndHoldController
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
@@ -28,7 +31,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.io.File
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     private val remoteController = AndroidTvRemoteController(application)
@@ -37,12 +39,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val shortcutPreferences = AppShortcutPreferences(application)
     private val operationMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     private val appUpdates = GitHubAppUpdates(application)
+    private val updateInstaller = AppUpdateInstaller(application)
+    internal val updateInstallation = updateInstaller.state
+    private var downloadJob: Job? = null
     private val mutableUpdateState = MutableStateFlow(AppUpdateState())
     internal val updateState = mutableUpdateState.asStateFlow()
     private var updateJob: Job? = null
     private var lastUpdateCheck: Long? = null
     private var manualUpdateCheck = false
-    private var dismissedUpdate: String? = null
 
     private var voiceJob: Job? = null
     private var stopRecording: CompletableDeferred<Unit>? = null
@@ -60,6 +64,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     val messages = merge(remoteController.messages, operationMessages)
 
     init {
+        updateInstaller.restore()
         viewModelScope.launch {
             val saved = shortcutPreferences.savedTvs.first()
             val selectedId = shortcutPreferences.selectedTvId.first()
@@ -71,6 +76,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val state = mutableUpdateState.value
         if (state.release != null) {
             if (manual) mutableUpdateState.value = state.copy(manual = true)
+            if (state.waitingForUnmetered && appUpdates.canDownloadAutomatically()) {
+                viewModelScope.launch { startAutomaticDownload() }
+            }
             return
         }
         if (manual) manualUpdateCheck = true
@@ -79,21 +87,21 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
         updateJob = viewModelScope.launch {
             try {
-                val automaticChecks = RemoteOption.AUTOMATIC_UPDATE_CHECKS in shortcutPreferences.remoteOptions.first()
-                if (!manualUpdateCheck && !automaticChecks) return@launch
+                if (!manualUpdateCheck &&
+                    RemoteOption.AUTOMATIC_UPDATE_CHECKS !in shortcutPreferences.remoteOptions.first()
+                ) return@launch
                 lastUpdateCheck = SystemClock.elapsedRealtime()
                 mutableUpdateState.value = AppUpdateState(checking = true)
                 val release = appUpdates.latest()
-                val showAutomaticPrompt = release != null && release.version != dismissedUpdate &&
-                    RemoteOption.AUTOMATIC_UPDATE_CHECKS in shortcutPreferences.remoteOptions.first()
-                if (manualUpdateCheck) {
+                val manualRequest = manualUpdateCheck
+                val automatic = RemoteOption.AUTOMATIC_UPDATE_CHECKS in shortcutPreferences.remoteOptions.first()
+                if (manualRequest || release != null && release.version != updateInstaller.dismissedVersion && automatic) {
                     mutableUpdateState.value = AppUpdateState(
                         release = release,
-                        manual = true,
+                        manual = manualRequest,
                         status = if (release == null) "TVControl is up to date." else null,
                     )
-                } else if (showAutomaticPrompt) {
-                    mutableUpdateState.value = AppUpdateState(release = release)
+                    startAutomaticDownload()
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -109,33 +117,95 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun downloadUpdate() {
+    private suspend fun startAutomaticDownload() {
+        val options = shortcutPreferences.remoteOptions.first()
+        val state = mutableUpdateState.value
+        if (!automaticDownloadEnabled(options) || state.release == null || state.apk != null ||
+            updateInstallation.value?.takeIf { it.version == state.release.version }?.running == true
+        ) return
+        if (!appUpdates.canDownloadAutomatically()) {
+            mutableUpdateState.value = state.copy(waitingForUnmetered = true)
+            return
+        }
+        downloadUpdate(automatic = true)
+    }
+
+    fun downloadUpdate(automatic: Boolean = false) {
         val state = mutableUpdateState.value
         val release = state.release ?: return
-        if (state.downloading || state.apk != null) return
-        mutableUpdateState.value = state.copy(downloading = true, error = null)
-        viewModelScope.launch {
+        if (state.downloading || state.apk != null || downloadJob?.isActive == true) return
+        mutableUpdateState.value = state.copy(
+            downloading = true,
+            backgroundDownload = automatic,
+            waitingForUnmetered = false,
+            error = null,
+        )
+        downloadJob = viewModelScope.launch {
             try {
-                val apk = appUpdates.download(release)
-                mutableUpdateState.value = state.copy(apk = apk, error = null)
+                val apk = appUpdates.download(release, automatic)
+                val options = shortcutPreferences.remoteOptions.first()
+                val installation = updateInstallation.value?.takeIf { it.version == release.version }
+                val request = when {
+                    installation?.running == true -> null
+                    !automatic -> false
+                    automaticInstallEnabled(options) && installation?.error == null -> true
+                    else -> null
+                }
+                mutableUpdateState.value = mutableUpdateState.value.copy(apk = apk, installRequest = request)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 Log.w(TAG, "Update download failed", error)
-                val message = if (error is UpdateSignatureMismatch) {
-                    "This APK uses a different signing key from the installed app and can’t update it in place."
-                } else {
-                    "Couldn’t download or verify the update. Try again."
-                }
-                mutableUpdateState.value = state.copy(error = message)
+                mutableUpdateState.value = mutableUpdateState.value.copy(error = updateErrorMessage(error))
+            } finally {
+                mutableUpdateState.value = mutableUpdateState.value.copy(
+                    downloading = false,
+                    backgroundDownload = false,
+                )
             }
         }
     }
 
-    fun dismissUpdate() {
-        if (mutableUpdateState.value.downloading) return
-        dismissedUpdate = mutableUpdateState.value.release?.version
+    fun installUpdate(automatic: Boolean) {
+        val state = mutableUpdateState.value
+        val apk = state.apk ?: return
+        if (state.installing || updateInstallation.value?.running == true) return
+        mutableUpdateState.value = state.copy(installRequest = null, installing = true, error = null)
+        viewModelScope.launch {
+            try {
+                if (!automatic || automaticInstallEnabled(shortcutPreferences.remoteOptions.first())) {
+                    updateInstaller.install(apk, automatic)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "Update installation failed to start", error)
+                mutableUpdateState.value = mutableUpdateState.value.copy(
+                    apk = apk.takeUnless { error is UpdateVerificationFailed },
+                    error = if (error is UpdateVerificationFailed) error.message else
+                        "Couldn’t start Android’s installer. Check the install permission and available storage.",
+                )
+            } finally {
+                mutableUpdateState.value = mutableUpdateState.value.copy(installing = false)
+            }
+        }
+    }
+
+    fun updateConfirmationOpened() = updateInstaller.confirmationOpened()
+
+    fun updateConfirmationUnavailable() = updateInstaller.confirmationUnavailable()
+
+    fun dismissUpdate(rememberChoice: Boolean = true) {
+        val state = mutableUpdateState.value
+        if (state.downloading || state.installing || updateInstallation.value?.running == true) return
+        if (rememberChoice) state.release?.version?.let(updateInstaller::dismissOffer)
         mutableUpdateState.value = AppUpdateState()
+    }
+
+    private fun updateErrorMessage(error: Exception): String = when (error) {
+        is UpdateSignatureMismatch -> "This APK uses a different signing key and can’t update the installed app."
+        is UpdateVerificationFailed -> error.message ?: "Couldn’t verify the update."
+        else -> "Couldn’t finish the download. Try again to resume it."
     }
 
     fun send(command: RemoteCommand) {
@@ -188,10 +258,26 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 shortcutPreferences.setRemoteOption(option, enabled)
-                if (option == RemoteOption.AUTOMATIC_UPDATE_CHECKS && !enabled &&
-                    !mutableUpdateState.value.manual && !mutableUpdateState.value.downloading &&
-                    mutableUpdateState.value.apk == null
-                ) dismissUpdate()
+                if (!enabled && option in setOf(
+                        RemoteOption.AUTOMATIC_UPDATE_CHECKS,
+                        RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS,
+                        RemoteOption.AUTOMATIC_UPDATE_INSTALLS,
+                    )
+                ) {
+                    if (option != RemoteOption.AUTOMATIC_UPDATE_INSTALLS &&
+                        mutableUpdateState.value.backgroundDownload
+                    ) {
+                        downloadJob?.cancel()
+                        downloadJob?.join()
+                    }
+                    val state = mutableUpdateState.value
+                    mutableUpdateState.value = state.copy(
+                        installRequest = state.installRequest.takeUnless { it == true },
+                        waitingForUnmetered = state.waitingForUnmetered &&
+                            option == RemoteOption.AUTOMATIC_UPDATE_INSTALLS,
+                    )
+                    if (option == RemoteOption.AUTOMATIC_UPDATE_CHECKS && !state.manual) dismissUpdate(rememberChoice = false)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -361,9 +447,19 @@ internal data class AppUpdateState(
     val manual: Boolean = false,
     val status: String? = null,
     val downloading: Boolean = false,
-    val apk: File? = null,
+    val apk: VerifiedUpdate? = null,
+    val backgroundDownload: Boolean = false,
+    val waitingForUnmetered: Boolean = false,
+    val installRequest: Boolean? = null,
+    val installing: Boolean = false,
     val error: String? = null,
 )
 
+
+internal fun automaticDownloadEnabled(options: Set<RemoteOption>): Boolean =
+    RemoteOption.AUTOMATIC_UPDATE_CHECKS in options && RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS in options
+
+internal fun automaticInstallEnabled(options: Set<RemoteOption>): Boolean =
+    automaticDownloadEnabled(options) && RemoteOption.AUTOMATIC_UPDATE_INSTALLS in options
 
 internal enum class VoiceState { IDLE, STARTING, LISTENING, FINISHING }

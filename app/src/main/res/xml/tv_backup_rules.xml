@@ -2,4 +2,5 @@
 <full-backup-content>
     <exclude domain="file" path="tvcontrol_identity.p12" />
     <exclude domain="file" path="tvcontrol_identity.p12.tmp" />
+    <exclude domain="sharedpref" path="update_installation.xml" />
 </full-backup-content>

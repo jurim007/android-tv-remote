@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 class ShortcutTestRunner : Instrumentation() {
+    private var updateCheck: String? = null
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
+        updateCheck = arguments?.getString("updateCheck")
         start()
     }
 
@@ -33,6 +35,17 @@ class ShortcutTestRunner : Instrumentation() {
         val report = StringBuilder()
         val result = runCatching {
             runBlocking {
+                updateCheck?.let { mode ->
+                    val checks = UpdateChecks(this@ShortcutTestRunner)
+                    when (mode) {
+                        "verify" -> checks.verifyDownloads()
+                        "cancel" -> checks.install(automatic = false)
+                        "automatic" -> checks.install(automatic = true)
+                        else -> error("Unknown updater check: $mode")
+                    }
+                    report.appendLine("PASS updater $mode")
+                    return@runBlocking
+                }
                 checkImages()
                 report.appendLine("PASS raster formats, PNG alpha, proportions, persistence, missing images and SVG")
                 checkTvShortcuts()

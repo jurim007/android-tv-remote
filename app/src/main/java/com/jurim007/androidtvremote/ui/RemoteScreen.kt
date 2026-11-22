@@ -152,6 +152,10 @@ internal fun RemoteScreen(
     val discoveredDevices by viewModel.discoveredDevices.collectAsStateWithLifecycle()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val installation by viewModel.updateInstallation.collectAsStateWithLifecycle()
+    val currentInstallation = installation?.takeIf {
+        it.version == updateState.release?.version || updateState.release == null && it.running
+    }
     val selectedTv = savedTvs.firstOrNull { it.id == shortcutTvId } ?: connectionState.device
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(viewModel) {
@@ -358,10 +362,19 @@ internal fun RemoteScreen(
             onDismiss = { connectionDialogMode = null },
         )
     }
-    if (updateState.release != null && connectionDialogMode == null && voiceState == VoiceState.IDLE &&
+    if ((updateState.release != null || currentInstallation?.running == true) &&
+        !updateState.backgroundDownload && connectionDialogMode == null && voiceState == VoiceState.IDLE &&
         (!settingsOpen || updateState.manual)
     ) {
-        AppUpdateDialog(updateState, viewModel::downloadUpdate, viewModel::dismissUpdate)
+        AppUpdateDialog(
+            state = updateState,
+            installation = currentInstallation,
+            onDownload = { viewModel.downloadUpdate() },
+            onInstall = viewModel::installUpdate,
+            onConfirmationOpened = viewModel::updateConfirmationOpened,
+            onConfirmationUnavailable = viewModel::updateConfirmationUnavailable,
+            onDismiss = { viewModel.dismissUpdate() },
+        )
     }
 }
 

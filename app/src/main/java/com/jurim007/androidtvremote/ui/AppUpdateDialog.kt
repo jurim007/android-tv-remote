@@ -17,96 +17,117 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import java.io.File
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
+import com.jurim007.androidtvremote.data.UpdateInstallation
 
 @Composable
 internal fun AppUpdateDialog(
     state: AppUpdateState,
+    installation: UpdateInstallation?,
     onDownload: () -> Unit,
+    onInstall: (Boolean) -> Unit,
+    onConfirmationOpened: () -> Unit,
+    onConfirmationUnavailable: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val release = checkNotNull(state.release)
+    val version = state.release?.version ?: checkNotNull(installation).version
     val context = LocalContext.current
-    var installError by rememberSaveable(release.version) { mutableStateOf<String?>(null) }
-
-    fun openInstaller(apk: File) {
-        runCatching {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
-            val intent = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            context.startActivity(intent)
-        }.onSuccess {
-            onDismiss()
-        }.onFailure {
-            installError = "Couldn’t open Android’s installer. Try again."
-        }
-    }
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    var canInstall by rememberSaveable(version) { mutableStateOf(context.packageManager.canRequestPackageInstalls()) }
+    var permissionError by rememberSaveable(version) { mutableStateOf<String?>(null) }
 
     val permissionSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val apk = state.apk ?: return@rememberLauncherForActivityResult
-        if (context.packageManager.canRequestPackageInstalls()) {
-            openInstaller(apk)
+        canInstall = context.packageManager.canRequestPackageInstalls()
+        if (canInstall) {
+            permissionError = null
+            onInstall(state.installRequest == true)
         } else {
-            installError = "Allow TVControl to install apps in Android settings to continue."
+            permissionError = "To install updates, allow TVControl as a source in Android settings."
         }
     }
 
-    fun install(apk: File) {
-        installError = null
-        if (context.packageManager.canRequestPackageInstalls()) {
-            openInstaller(apk)
+    fun requestInstall() {
+        permissionError = null
+        canInstall = context.packageManager.canRequestPackageInstalls()
+        if (canInstall) {
+            onInstall(state.installRequest == true)
         } else {
             val settings = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 "package:${context.packageName}".toUri(),
             )
             runCatching { permissionSettings.launch(settings) }.onFailure {
-                installError = "Couldn’t open Android’s install permission settings."
+                permissionError = "Couldn’t open Android’s install permission settings."
             }
         }
     }
 
-    var startedInstaller by rememberSaveable(release.version) { mutableStateOf(false) }
-    LaunchedEffect(state.apk) {
-        state.apk?.let { apk ->
-            if (!startedInstaller) {
-                startedInstaller = true
-                install(apk)
-            }
+    fun showConfirmation(confirmation: Intent) {
+        runCatching { context.startActivity(confirmation) }
+            .onSuccess { onConfirmationOpened() }
+            .onFailure { onConfirmationUnavailable() }
+    }
+
+    LaunchedEffect(lifecycleState, state.installRequest, installation) {
+        if (lifecycleState != Lifecycle.State.RESUMED) return@LaunchedEffect
+        canInstall = context.packageManager.canRequestPackageInstalls()
+        val confirmation = installation?.confirmation
+        if (confirmation != null && !installation.confirmationOpened) {
+            showConfirmation(confirmation)
+        } else if (state.installRequest != null && canInstall && installation?.running != true) {
+            onInstall(state.installRequest)
         }
     }
 
+    val working = state.downloading || state.installing || installation?.running == true
+    val confirmation = installation?.confirmation
     AlertDialog(
-        title = { Text("TVControl ${release.version} is available") },
+        title = { Text("TVControl $version is available") },
         text = {
             Column {
                 Text(
-                    installError ?: state.error ?: when {
-                        state.downloading -> "Downloading the update…"
-                        state.apk != null -> "The update is ready to install."
-                        else -> "Download the new version from GitHub and install it with Android’s installer?"
+                    permissionError ?: state.error ?: installation?.error ?: when {
+                        confirmation != null -> "Android requires confirmation to finish installing this update."
+                        state.downloading -> "Downloading and verifying the update…"
+                        state.installing || installation?.running == true -> "Android is preparing the update…"
+                        state.apk != null && !canInstall ->
+                            "To install the verified update, allow TVControl as an installation source in Android settings."
+                        state.apk != null -> "The verified update is ready to install."
+                        state.waitingForUnmetered ->
+                            "Automatic download is waiting for an unmetered connection. You can download now."
+                        else -> "Download the new version from GitHub?"
                     },
                 )
-                if (state.downloading) LinearProgressIndicator()
+                if (working && confirmation == null) LinearProgressIndicator()
             }
         },
-        onDismissRequest = { if (!state.downloading) onDismiss() },
+        onDismissRequest = { if (!working) onDismiss() },
         confirmButton = {
             Button(
                 onClick = {
-                    val apk = state.apk
-                    if (apk == null) onDownload() else install(apk)
+                    when {
+                        confirmation != null -> showConfirmation(confirmation)
+                        state.apk != null -> requestInstall()
+                        else -> onDownload()
+                    }
                 },
-                enabled = !state.downloading,
+                enabled = confirmation != null || !working,
             ) {
-                Text(if (state.apk == null) "Update" else "Install update")
+                Text(
+                    when {
+                        confirmation != null -> "Continue in Android"
+                        state.apk == null -> "Update"
+                        !canInstall -> "Open Android settings"
+                        else -> "Install update"
+                    },
+                )
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !state.downloading) { Text("Later") }
+            TextButton(onClick = onDismiss, enabled = !working) { Text("Later") }
         },
     )
 }

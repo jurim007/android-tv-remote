@@ -11,6 +11,8 @@ enum class RemoteOption(val preferenceKey: String, val enabledByDefault: Boolean
     PHONE_VOLUME("phone_controls_tv_volume", enabledByDefault = false),
     VIBRATION("remote_button_vibration"),
     AUTOMATIC_UPDATE_CHECKS("automatic_update_checks"),
+    AUTOMATIC_UPDATE_DOWNLOADS("automatic_update_downloads", enabledByDefault = false),
+    AUTOMATIC_UPDATE_INSTALLS("automatic_update_installs", enabledByDefault = false),
     ;
 
     companion object {

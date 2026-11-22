@@ -3,9 +3,11 @@
     <cloud-backup>
         <exclude domain="file" path="tvcontrol_identity.p12" />
         <exclude domain="file" path="tvcontrol_identity.p12.tmp" />
+        <exclude domain="sharedpref" path="update_installation.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="tvcontrol_identity.p12" />
         <exclude domain="file" path="tvcontrol_identity.p12.tmp" />
+        <exclude domain="sharedpref" path="update_installation.xml" />
     </device-transfer>
 </data-extraction-rules>

@@ -324,10 +324,20 @@ fun RemoteSettingsDialog(
                 }
                 SettingsSection("Updates") {
                     SettingsToggle(
-                        title = "Automatically check for updates",
-                        detail = "Check GitHub for a new release when you open TVControl.",
+                        title = "Automatic Updates",
+                        detail = "Check GitHub when TVControl opens and allow automatic downloads and installation.",
                         enabled = RemoteOption.AUTOMATIC_UPDATE_CHECKS in options,
                     ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_CHECKS, it) }
+                    SettingsToggle(
+                        title = "Automatic Downloads",
+                        detail = "Download updates on unmetered connections.",
+                        enabled = RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS in options,
+                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_DOWNLOADS, it) }
+                    SettingsToggle(
+                        title = "Automatic Installation",
+                        detail = "Install automatically downloaded updates. Android may still ask for confirmation.",
+                        enabled = RemoteOption.AUTOMATIC_UPDATE_INSTALLS in options,
+                    ) { onOptionChange(RemoteOption.AUTOMATIC_UPDATE_INSTALLS, it) }
                     SettingsLink(
                         title = "Check for updates",
                         detail = when {
