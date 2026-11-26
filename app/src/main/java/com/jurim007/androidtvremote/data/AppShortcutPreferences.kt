@@ -154,6 +154,17 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
         }
     }
 
+    suspend fun renameTv(deviceId: String, name: String) {
+        val trimmed = name.trim()
+        require(trimmed.isNotEmpty()) { "Enter a TV name." }
+        dataStore.edit { preferences ->
+            val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices) ?: return@edit
+            preferences[SAVED_TVS] = encodeTvDevices(
+                devices.map { if (it.id == deviceId) it.copy(name = trimmed) else it },
+            )
+        }
+    }
+
     suspend fun setGoogleTv(deviceId: String, isGoogleTv: Boolean) {
         dataStore.edit { preferences ->
             val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices) ?: return@edit

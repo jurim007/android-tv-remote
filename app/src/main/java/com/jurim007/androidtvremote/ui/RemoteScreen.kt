@@ -374,6 +374,7 @@ internal fun RemoteScreen(
             onBeginPairing = viewModel::beginPairing,
             onCompletePairing = viewModel::completePairing,
             onConnect = viewModel::connect,
+            onRename = viewModel::renameTv,
             onRemove = viewModel::removeTv,
             onCancelPairing = viewModel::cancelPairing,
             onDismiss = { connectionDialogMode = null },

@@ -69,6 +69,43 @@ class TvAppCatalogTest {
         assertNull(TvAppCatalog.translate(TvAppShortcut("Mine", "com.example.mine"), TvPlatform.WEBOS))
     }
 
+    /** The launch points reported by a Sunny webOS Hub TV. */
+    private val sunnyApps = listOf(
+        TvInstalledApp("youtube.leanback.v4", "YouTube"),
+        TvInstalledApp("ui30", "Rakuten TV"),
+        TvInstalledApp("com.webos.app.discovery", "Apps"),
+        TvInstalledApp("com.webos.app.homeoffice", "Home Office"),
+        TvInstalledApp("amazon", "Prime Video"),
+        TvInstalledApp("com.webos.app.totalmusic", "Music"),
+        TvInstalledApp("com.webos.app.homeconnect", "Home Hub"),
+        TvInstalledApp("com.webos.app.browser", "Web Browser"),
+        TvInstalledApp("com.webos.app.mediadiscovery", "Media Player"),
+    )
+
+    @Test
+    fun everyAppOnTheSunnyTvHasALogo() {
+        val missing = sunnyApps.filter { TvAppCatalog.match(it.id, it.title) == null }
+        assertEquals(emptyList<TvInstalledApp>(), missing)
+    }
+
+    @Test
+    fun sunnyDefaultsUseItsStreamingApps() {
+        assertEquals(
+            listOf(
+                TvAppShortcut("YouTube", "youtube.leanback.v4"),
+                TvAppShortcut("Prime Video", "amazon"),
+                TvAppShortcut("Rakuten TV", "ui30"),
+            ),
+            TvAppCatalog.defaultShortcuts(TvPlatform.WEBOS, sunnyApps),
+        )
+    }
+
+    @Test
+    fun webOsSystemAppsAreNotSuggestedForAndroidTv() {
+        val androidApps = TvAppCatalog.apps.filter { it.ids(TvPlatform.ANDROID_TV).isNotEmpty() }.map { it.name }
+        assertEquals(false, "Home Hub" in androidApps || "HDMI 1" in androidApps)
+    }
+
     @Test
     fun catalogIdsAreUnique() {
         val ids = TvAppCatalog.apps.flatMap { it.androidIds + it.webOsIds }
