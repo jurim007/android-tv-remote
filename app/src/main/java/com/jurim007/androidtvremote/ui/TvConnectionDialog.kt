@@ -101,6 +101,7 @@ fun TvConnectionDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        ResizeDialogForKeyboard()
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.9f)
@@ -367,6 +368,7 @@ private fun RenameTvDialog(device: TvDevice, onDismiss: () -> Unit, onRename: (S
         onDismissRequest = onDismiss,
         title = { Text("Rename TV") },
         text = {
+            ResizeDialogForKeyboard()
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it.take(MAX_TV_NAME_LENGTH) },

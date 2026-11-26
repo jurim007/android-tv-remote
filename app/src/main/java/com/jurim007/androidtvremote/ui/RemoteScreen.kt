@@ -1274,6 +1274,7 @@ private fun TypeTextDialog(
         tonalElevation = 0.dp,
         title = { Text("Type to TV") },
         text = {
+            ResizeDialogForKeyboard()
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = value,
