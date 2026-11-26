@@ -165,6 +165,15 @@ object ShortcutImageDownloader {
     fun renderSvg(input: java.io.InputStream): Bitmap {
         val svg = parseSvg(readImageBytes(input))
         val aspect = svg.documentAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+        // A fixed width and height (such as width="24") would draw the icon at that size in the
+        // corner of the bitmap, so scale the drawing to fill it instead.
+        if (svg.documentViewBox == null && svg.documentWidth > 0f && svg.documentHeight > 0f) {
+            svg.setDocumentViewBox(0f, 0f, svg.documentWidth, svg.documentHeight)
+        }
+        if (svg.documentViewBox != null) {
+            svg.setDocumentWidth("100%")
+            svg.setDocumentHeight("100%")
+        }
         val width = (ICON_PIXELS * minOf(aspect, 1f)).roundToInt().coerceAtLeast(1)
         val height = (ICON_PIXELS / maxOf(aspect, 1f)).roundToInt().coerceAtLeast(1)
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->

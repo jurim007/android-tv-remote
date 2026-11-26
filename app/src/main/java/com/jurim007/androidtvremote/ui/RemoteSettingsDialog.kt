@@ -173,6 +173,7 @@ fun RemoteSettingsDialog(
         onDismissRequest = goBack,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        ResizeDialogForKeyboard()
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.9f)
