@@ -70,6 +70,11 @@ internal object TvAppCatalog {
             webOsIds = listOf("amazon"),
             aliases = listOf("Amazon Prime Video", "Amazon Prime"),
         ),
+        TvCatalogApp(
+            "Rakuten TV", "rakutentv.svg",
+            listOf("tv.wuaki"),
+            webOsIds = listOf("ui30"),
+        ),
         TvCatalogApp("Rakuten Viki", "viki.svg", listOf("com.viki.android"), aliases = listOf("Viki")),
         TvCatalogApp("SoundCloud", "soundcloud.svg", listOf("com.soundcloud.android")),
         TvCatalogApp(
@@ -90,7 +95,7 @@ internal object TvAppCatalog {
             "YouTube Music", "youtubemusic.svg",
             listOf("com.google.android.youtube.tvmusic", "com.google.android.apps.youtube.music"),
         ),
-    )
+    ) + webOsSystemApps()
 
     private val byId: Map<String, TvCatalogApp> = buildMap {
         apps.forEach { app -> (app.androidIds + app.webOsIds).forEach { put(it, app) } }
@@ -138,6 +143,25 @@ internal object TvAppCatalog {
         return detected.ifEmpty { defaultWebOsShortcuts }
     }
 
+    /** Built-in webOS apps and inputs, which only have webOS IDs. */
+    private fun webOsSystemApps(): List<TvCatalogApp> = listOf(
+        TvCatalogApp("Web Browser", "browser.svg", emptyList(), listOf("com.webos.app.browser")),
+        TvCatalogApp("Media Player", "mediaplayer.svg", emptyList(), listOf("com.webos.app.mediadiscovery")),
+        TvCatalogApp("Music", "music.svg", emptyList(), listOf("com.webos.app.totalmusic")),
+        TvCatalogApp(
+            "Home Hub", "homehub.svg", emptyList(), listOf("com.webos.app.homeconnect"),
+            aliases = listOf("Home Dashboard"),
+        ),
+        TvCatalogApp(
+            "Apps", "webosapps.svg", emptyList(), listOf("com.webos.app.discovery"),
+            aliases = listOf("LG Content Store"),
+        ),
+        TvCatalogApp("Home Office", "homeoffice.svg", emptyList(), listOf("com.webos.app.homeoffice")),
+        TvCatalogApp("Live TV", "livetv.svg", emptyList(), listOf("com.webos.app.livetv")),
+    ) + (1..4).map { port ->
+        TvCatalogApp("HDMI $port", "input.svg", emptyList(), listOf("com.webos.app.hdmi$port"))
+    }
+
     fun normalizeTitle(title: String): String =
         title.lowercase().replace("+", "plus").filter(Char::isLetterOrDigit)
 
@@ -146,6 +170,6 @@ internal object TvAppCatalog {
     /** Apps tried in order when picking a webOS TV's default shortcuts. */
     private val DEFAULT_PRIORITY = listOf(
         "YouTube", "Netflix", "Prime Video", "Disney+", "Apple TV", "HBO Max", "Hulu", "Spotify",
-        "Plex", "Twitch", "Paramount+", "Peacock", "Crunchyroll", "Tubi", "Pluto TV", "YouTube Music",
+        "Plex", "Twitch", "Paramount+", "Peacock", "Rakuten TV", "Crunchyroll", "Tubi", "Pluto TV", "YouTube Music",
     )
 }

@@ -1,6 +1,22 @@
 package com.jurim007.androidtvremote.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import com.jurim007.androidtvremote.domain.tvTypeLabel
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,6 +72,7 @@ fun TvConnectionDialog(
     onBeginPairing: (TvDevice) -> Unit,
     onCompletePairing: (pin: String, name: String) -> Unit,
     onConnect: (TvDevice) -> Unit,
+    onRename: (deviceId: String, name: String) -> Unit,
     onRemove: (String) -> Unit,
     onCancelPairing: () -> Unit,
     onDismiss: () -> Unit,
@@ -65,6 +82,8 @@ fun TvConnectionDialog(
     var manualHost by rememberSaveable { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
     var pairingStarted by rememberSaveable { mutableStateOf(false) }
+    var renamingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var removingId by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(manageOnly, repairDevice?.id) {
         if (repairDevice != null && !pairingStarted) {
@@ -106,20 +125,16 @@ fun TvConnectionDialog(
                 if (savedTvs.isEmpty()) {
                     Text("No paired TVs saved.", color = RemoteMuted)
                 } else {
+                    Text("Tap a TV to connect to it.", color = RemoteMuted, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
                     savedTvs.forEach { device ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(device.name, color = RemoteText)
-                                Text(device.host, color = RemoteMuted)
-                            }
-                            TextButton(onClick = { onConnect(device) }) { Text("Connect") }
-                            TextButton(onClick = { onRemove(device.id) }) { Text("Remove") }
-                        }
+                        SavedTvRow(
+                            device = device,
+                            connectionState = connectionState,
+                            onConnect = { onConnect(device) },
+                            onRename = { renamingId = device.id },
+                            onRemove = { removingId = device.id },
+                        )
                     }
                 }
             } else if (connectionState.phase == TvConnectionPhase.PAIRING) {
@@ -273,7 +288,104 @@ fun TvConnectionDialog(
             }
         }
     }
+    savedTvs.firstOrNull { it.id == renamingId }?.let { device ->
+        RenameTvDialog(device, onDismiss = { renamingId = null }) { name ->
+            onRename(device.id, name)
+            renamingId = null
+        }
+    }
+    savedTvs.firstOrNull { it.id == removingId }?.let { device ->
+        AlertDialog(
+            onDismissRequest = { removingId = null },
+            title = { Text("Remove ${device.name}?") },
+            text = { Text("You’ll need to pair this TV again to use it.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemove(device.id)
+                    removingId = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { removingId = null }) { Text("Cancel") } },
+        )
+    }
 }
+
+@Composable
+private fun SavedTvRow(
+    device: TvDevice,
+    connectionState: TvConnectionState,
+    onConnect: () -> Unit,
+    onRename: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val connected = connectionState.phase == TvConnectionPhase.CONNECTED && connectionState.device?.id == device.id
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClickLabel = "Connect to ${device.name}", onClick = onConnect)
+            .padding(start = 10.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = device.name,
+                    color = RemoteText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (connected) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.size(8.dp).background(Color(0xFF52D18A), CircleShape))
+                }
+            }
+            Text(
+                text = listOfNotNull(tvTypeLabel(device, connectionState), device.host).joinToString(" · "),
+                color = RemoteMuted,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onRename) {
+            Icon(Icons.Outlined.Edit, contentDescription = "Rename ${device.name}", tint = RemoteMuted)
+        }
+        IconButton(onClick = onRemove) {
+            Icon(Icons.Outlined.Delete, contentDescription = "Remove ${device.name}", tint = RemoteMuted)
+        }
+    }
+}
+
+@Composable
+private fun RenameTvDialog(device: TvDevice, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+    var name by rememberSaveable(device.id) { mutableStateOf(device.name) }
+    val trimmed = name.trim()
+    val canSave = trimmed.isNotEmpty() && trimmed != device.name
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename TV") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(MAX_TV_NAME_LENGTH) },
+                label = { Text("TV name") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Words,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { if (canSave) onRename(trimmed) }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onRename(trimmed) }, enabled = canSave) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private const val MAX_TV_NAME_LENGTH = 40
 
 @Composable
 private fun TvDeviceRow(

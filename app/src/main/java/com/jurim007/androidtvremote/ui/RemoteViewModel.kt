@@ -478,6 +478,18 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun renameTv(deviceId: String, name: String) {
+        viewModelScope.launch {
+            try {
+                shortcutPreferences.renameTv(deviceId, name)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportFailure("Could not rename the TV", error)
+            }
+        }
+    }
+
     fun removeTv(deviceId: String) {
         viewModelScope.launch {
             try {

@@ -442,13 +442,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
         }
         when (command) {
             RemoteCommand.Power -> if (!turnOnFromStandby(session)) turnOff(session)
-            RemoteCommand.Source -> try {
-                session.main.request(LAUNCH, JSONObject().put("id", INPUT_PICKER_APP))
-            } catch (error: WebOsCommandException) {
-                // Some webOS versions don't expose the input picker as an app.
-                Log.d(TAG, "Input picker app unavailable, asking the surface manager", error)
-                lunaRequest(session, SHOW_INPUT_PICKER)
-            }
+            RemoteCommand.Source -> openInputList(session)
             RemoteCommand.Delete -> if (canType(session)) {
                 session.main.request(DELETE_CHARACTERS, JSONObject().put("count", 1))
             }
@@ -504,6 +498,22 @@ class WebOsRemoteController(context: Context) : RemoteController {
             true
         }
         TvPower.ON, TvPower.SHUTTING_DOWN, TvPower.UNKNOWN -> false
+    }
+
+    /**
+     * Opens the TV's own list of inputs. Older webOS has a dedicated input picker; newer
+     * versions, including webOS Hub TVs, list the inputs in Home Hub instead.
+     */
+    private suspend fun openInputList(session: Session) {
+        for (appId in INPUT_LIST_APPS) {
+            try {
+                session.main.request(LAUNCH, JSONObject().put("id", appId))
+                return
+            } catch (error: WebOsCommandException) {
+                Log.d(TAG, "$appId could not open: ${error.message}")
+            }
+        }
+        lunaRequest(session, SHOW_INPUT_PICKER)
     }
 
     /**
@@ -791,7 +801,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
         private const val INSERT_TEXT = "com.webos.service.ime/insertText"
         private const val DELETE_CHARACTERS = "com.webos.service.ime/deleteCharacters"
         private const val SEND_ENTER = "com.webos.service.ime/sendEnterKey"
-        private const val INPUT_PICKER_APP = "com.webos.app.inputpicker"
+        private val INPUT_LIST_APPS = listOf("com.webos.app.inputpicker", "com.webos.app.homeconnect")
         private const val SHOW_INPUT_PICKER = "luna://com.webos.surfacemanager/showInputPicker"
         private const val CREATE_ALERT = "system.notifications/createAlert"
         private const val CLOSE_ALERT = "system.notifications/closeAlert"
