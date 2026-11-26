@@ -3,6 +3,7 @@ package com.jurim007.androidtvremote.data
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.SystemClock
 import android.util.Log
 import com.jurim007.androidtvremote.data.protocol.ProtoWire
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
@@ -99,6 +100,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
     private var connectionGeneration = 0L
     @Volatile
     private var imeField: TvImeField? = null
+    /** When the TV last sent anything; it pings regularly while the connection is healthy. */
+    @Volatile
+    private var lastReceivedAt = 0L
 
     init {
         scope.launch {
@@ -347,8 +351,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             }
 
             var initialImeField: TvImeField? = null
+            var initialGoogleTv: Boolean? = null
             val trackIme: (ByteArray) -> Unit = {
                 initialImeField = TvRemoteProtocol.updateImeField(it, initialImeField)
+                detectGoogleTv(it)?.let { googleTv -> initialGoogleTv = googleTv }
             }
             val configure = readRemoteUntil(socket, 1, trackIme)
             val advertisedFeatures = TvRemoteProtocol.remoteFeatures(configure)
@@ -377,7 +383,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     phase = TvConnectionPhase.CONNECTED,
                     device = device,
                     supportedFeatures = negotiatedFeatures,
+                    detectedGoogleTv = initialGoogleTv,
                 )
+                lastReceivedAt = SystemClock.elapsedRealtime()
                 readerJob = scope.launch { readRemoteMessages(socket, device) }
             }
         } finally {
@@ -686,6 +694,14 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             while (socket === remoteSocket) {
                 val message = readDelimited(socket)
                     ?: throw EOFException("The TV closed the connection.")
+                lastReceivedAt = SystemClock.elapsedRealtime()
+                detectGoogleTv(message)?.let { googleTv ->
+                    synchronized(connectionLock) {
+                        if (socket === remoteSocket) {
+                            mutableConnectionState.update { it.copy(detectedGoogleTv = googleTv) }
+                        }
+                    }
+                }
                 val response = TvRemoteProtocol.pingResponse(message)
                 if (response != null) {
                     writeMessage(socket, response)
@@ -715,7 +731,36 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         }
     }
 
-    private fun handleConnectionLoss(socket: SSLSocket, device: TvDevice, error: IOException) {
+    private fun detectGoogleTv(message: ByteArray): Boolean? =
+        TvRemoteProtocol.foregroundApp(message)?.let(TvRemoteProtocol::isGoogleTvLauncher)
+
+    override fun checkConnection() {
+        val stale = synchronized(connectionLock) {
+            val device = mutableConnectionState.value.device ?: return
+            val socket = remoteSocket
+            when {
+                socket != null -> {
+                    if (SystemClock.elapsedRealtime() - lastReceivedAt < STALE_CONNECTION_MS) return
+                    socket to device
+                }
+                reconnectJob?.isActive == true -> {
+                    reconnectJob?.cancel()
+                    reconnectJob = scope.launch { reconnect(device, connectionGeneration, immediate = true) }
+                    return
+                }
+                else -> return
+            }
+        }
+        // Nothing has arrived for longer than the TV's ping interval, so the link died quietly.
+        handleConnectionLoss(stale.first, stale.second, IOException("The TV stopped responding."), immediate = true)
+    }
+
+    private fun handleConnectionLoss(
+        socket: SSLSocket,
+        device: TvDevice,
+        error: IOException,
+        immediate: Boolean = false,
+    ) {
         synchronized(connectionLock) {
             if (socket !== remoteSocket) return
             remoteSocket = null
@@ -735,15 +780,15 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     device = device,
                     message = "Reconnecting to ${device.name}…",
                 )
-                reconnectJob = scope.launch { reconnect(device, generation) }
+                reconnectJob = scope.launch { reconnect(device, generation, immediate) }
             }
         }
         socket.closeQuietly()
     }
 
-    private suspend fun reconnect(device: TvDevice, generation: Long) {
+    private suspend fun reconnect(device: TvDevice, generation: Long, immediate: Boolean = false) {
         for (attempt in 1..MAX_RECONNECT_ATTEMPTS) {
-            delay(RECONNECT_DELAY_MS * attempt)
+            if (!immediate || attempt > 1) delay(RECONNECT_DELAY_MS * attempt)
             try {
                 openRemoteSession(device, generation)
                 return
@@ -986,6 +1031,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         const val MAX_HANDSHAKE_MESSAGES = 12
         const val RECONNECT_DELAY_MS = 2_000L
         const val MAX_RECONNECT_ATTEMPTS = 5
+        const val STALE_CONNECTION_MS = 15_000L
         const val VOICE_RESPONSE_TIMEOUT_MS = 2_500L
         const val VOICE_ENDPOINT_TIMEOUT_MS = 3_000L
         const val VOICE_RESULT_GRACE_MS = 2_000L

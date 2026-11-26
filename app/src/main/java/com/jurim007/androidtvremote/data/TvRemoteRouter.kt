@@ -109,6 +109,8 @@ class TvRemoteRouter(context: Context) : RemoteController {
         active.disconnect()
     }
 
+    override fun checkConnection() = active.checkConnection()
+
     override fun send(command: RemoteCommand) = active.send(command)
 
     override fun startHolding(command: RemoteCommand, holdId: Long) = active.startHolding(command, holdId)

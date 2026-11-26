@@ -20,6 +20,12 @@ interface RemoteController {
     suspend fun cancelPendingPairing()
     suspend fun disconnect()
 
+    /**
+     * Called when the app returns to the screen. Replaces a connection that died while the
+     * phone was locked, and retries a pending reconnect without waiting out its delay.
+     */
+    fun checkConnection()
+
     fun send(command: RemoteCommand)
     fun startHolding(command: RemoteCommand, holdId: Long)
     fun stopHolding(holdId: Long)

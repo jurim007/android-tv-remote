@@ -89,6 +89,22 @@ class WebOsProtocolTest {
     }
 
     @Test
+    fun powerStatesAreClassified() {
+        fun power(state: String, processing: String? = null) = WebOsRemoteController.classifyPower(
+            JSONObject().put("state", state).apply { if (processing != null) put("processing", processing) },
+        )
+        assertEquals(WebOsRemoteController.Companion.TvPower.ON, power("Active"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.ON, power("Screen Saver"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.SCREEN_OFF, power("Screen Off"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.STANDBY, power("Active Standby"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.STANDBY, power("Suspend"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.SHUTTING_DOWN, power("Active", "Request Power Off"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.SHUTTING_DOWN, power("Active", "Prepare Suspend"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.SHUTTING_DOWN, power("Power Off"))
+        assertEquals(WebOsRemoteController.Companion.TvPower.UNKNOWN, power(""))
+    }
+
+    @Test
     fun registrationOffersSignedAndUnsignedManifests() {
         val signed = WebOsRegistration.message(clientKey = null, signed = true)
         assertEquals("register", signed.getString("type"))

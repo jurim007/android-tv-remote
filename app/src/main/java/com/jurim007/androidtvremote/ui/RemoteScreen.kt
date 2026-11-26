@@ -128,6 +128,7 @@ import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.domain.TvDevice
 import com.jurim007.androidtvremote.domain.TvPlatform
+import com.jurim007.androidtvremote.domain.tvTypeLabel
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -185,7 +186,10 @@ internal fun RemoteScreen(
     }
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) viewModel.checkForUpdates()
+            if (event == Lifecycle.Event.ON_START) {
+                viewModel.onAppForeground()
+                viewModel.checkForUpdates()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -262,6 +266,8 @@ internal fun RemoteScreen(
                     onAddTv = { connectionDialogMode = "add" },
                     onCommand = viewModel::send,
                     onOpenSettings = { settingsOpen = true },
+                    typeBadge = tvTypeLabel(selectedTv, connectionState)
+                        .takeIf { RemoteOption.TV_TYPE_BADGE in options },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(headerHeight),
@@ -399,6 +405,7 @@ private fun DeviceHeader(
     onAddTv: () -> Unit,
     onCommand: (RemoteCommand) -> Unit,
     onOpenSettings: () -> Unit,
+    typeBadge: String?,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -434,114 +441,122 @@ private fun DeviceHeader(
             modifier = Modifier.size(34.dp),
         )
         Spacer(Modifier.width(18.dp))
-        Box {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .combinedClickable(
-                        onClick = { menuExpanded = true },
-                        onLongClick = { menuExpanded = true },
+        // The name gives way to the badge and power button and shortens with an ellipsis.
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f, fill = false)) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .combinedClickable(
+                            onClick = { menuExpanded = true },
+                            onLongClick = { menuExpanded = true },
+                        )
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = selectedTv?.name ?: "Select a TV",
+                        modifier = Modifier.weight(1f, fill = false),
+                        color = RemoteText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    .padding(vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = selectedTv?.name ?: "Select a TV",
-                    color = RemoteText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(9.dp))
-                Box(
-                    Modifier
-                        .size(9.dp)
-                        .background(connectionColor, CircleShape),
-                )
-                Spacer(Modifier.width(12.dp))
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Choose TV",
-                    tint = RemoteAccent,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false },
-                modifier = Modifier
-                    .widthIn(min = 220.dp),
-                shape = RoundedCornerShape(24.dp),
-                containerColor = Color(0xE611121E),
-                tonalElevation = 0.dp,
-                shadowElevation = 18.dp,
-                border = BorderStroke(1.dp, RemoteBorder.copy(alpha = 0.74f)),
-            ) {
-                if (savedTvs.isEmpty()) {
-                    DropdownMenuItem(
-                        text = { Text("No saved TVs") },
-                        onClick = {},
-                        enabled = false,
+                    Spacer(Modifier.width(9.dp))
+                    Box(
+                        Modifier
+                            .size(9.dp)
+                            .background(connectionColor, CircleShape),
                     )
-                } else {
-                    savedTvs.forEach { device ->
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Choose TV",
+                        tint = RemoteAccent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    modifier = Modifier
+                        .widthIn(min = 220.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    containerColor = Color(0xE611121E),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 18.dp,
+                    border = BorderStroke(1.dp, RemoteBorder.copy(alpha = 0.74f)),
+                ) {
+                    if (savedTvs.isEmpty()) {
                         DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        Modifier
-                                            .size(8.dp)
-                                            .background(
-                                                if (
-                                                    isSelectedConnected &&
-                                                    connectionState.device.id == device.id
-                                                ) {
-                                                    Color(0xFF52D18A)
-                                                } else {
-                                                    Color(0xFF777887)
-                                                },
-                                                CircleShape,
-                                            ),
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(device.name)
-                                }
-                            },
+                            text = { Text("No saved TVs") },
+                            onClick = {},
+                            enabled = false,
+                        )
+                    } else {
+                        savedTvs.forEach { device ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            Modifier
+                                                .size(8.dp)
+                                                .background(
+                                                    if (
+                                                        isSelectedConnected &&
+                                                        connectionState.device.id == device.id
+                                                    ) {
+                                                        Color(0xFF52D18A)
+                                                    } else {
+                                                        Color(0xFF777887)
+                                                    },
+                                                    CircleShape,
+                                                ),
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(device.name)
+                                    }
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onSelectTv(device)
+                                },
+                            )
+                        }
+                    }
+                    if (connectionState.needsPairing && connectionState.device?.id == selectedTv?.id) {
+                        DropdownMenuItem(
+                            text = { Text("Pair again") },
                             onClick = {
                                 menuExpanded = false
-                                onSelectTv(device)
+                                onRepairTv()
                             },
                         )
                     }
-                }
-                if (connectionState.needsPairing && connectionState.device?.id == selectedTv?.id) {
                     DropdownMenuItem(
-                        text = { Text("Pair again") },
+                        text = { Icon(Icons.Filled.Add, contentDescription = "Add TV") },
                         onClick = {
                             menuExpanded = false
-                            onRepairTv()
+                            onAddTv()
+                        },
+                    )
+                    HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
+                    DropdownMenuItem(
+                        text = { Text("Remote settings") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenSettings()
                         },
                     )
                 }
-                DropdownMenuItem(
-                    text = { Icon(Icons.Filled.Add, contentDescription = "Add TV") },
-                    onClick = {
-                        menuExpanded = false
-                        onAddTv()
-                    },
-                )
-                HorizontalDivider(color = RemoteBorder.copy(alpha = 0.55f))
-                DropdownMenuItem(
-                    text = { Text("Remote settings") },
-                    onClick = {
-                        menuExpanded = false
-                        onOpenSettings()
-                    },
-                )
+            }
+            if (typeBadge != null) {
+                Spacer(Modifier.width(10.dp))
+                TvTypeBadge(typeBadge)
             }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
         RemoteTapTarget(
             description = "Power",
             onClick = { onCommand(RemoteCommand.Power) },
@@ -563,6 +578,24 @@ private fun DeviceHeader(
             )
         }
     }
+}
+
+@Composable
+private fun TvTypeBadge(label: String) {
+    Text(
+        text = label,
+        color = RemoteAccent,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.3.sp,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(RemoteAccent.copy(alpha = 0.10f))
+            .border(1.dp, RemoteAccent.copy(alpha = 0.32f), CircleShape)
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+    )
 }
 
 @Composable
