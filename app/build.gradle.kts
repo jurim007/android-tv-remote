@@ -87,8 +87,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     implementation("com.caverock:androidsvg-aar:1.4")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json is a stub in JVM tests.
+    testImplementation("org.json:json:20250517")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

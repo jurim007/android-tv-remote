@@ -110,7 +110,9 @@ import com.jurim007.androidtvremote.R
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.domain.TvAppShortcut
-import com.jurim007.androidtvremote.domain.defaultTvShortcuts
+import com.jurim007.androidtvremote.domain.TvAppCatalog
+import com.jurim007.androidtvremote.domain.TvInstalledApp
+import com.jurim007.androidtvremote.domain.TvPlatform
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.data.ShortcutImageDownloader
@@ -140,6 +142,9 @@ fun RemoteSettingsDialog(
     onManageTvs: () -> Unit,
     onShortcutsChange: (List<TvAppShortcut>) -> Unit,
     connectionState: TvConnectionState,
+    platform: TvPlatform,
+    defaultShortcuts: List<TvAppShortcut>,
+    installedApps: List<TvInstalledApp>?,
     onDismiss: () -> Unit,
 ) {
     var removeShortcut by remember { mutableStateOf<TvAppShortcut?>(null) }
@@ -219,6 +224,8 @@ fun RemoteSettingsDialog(
                     AddTvAppForm(
                         existingShortcuts = shortcuts,
                         initialShortcut = editingShortcut,
+                        platform = platform,
+                        installedApps = installedApps,
                         onSave = { shortcut ->
                             val oldPackageName = editingShortcut?.packageName
                             onShortcutsChange(
@@ -290,7 +297,7 @@ fun RemoteSettingsDialog(
                                 Icon(Icons.Filled.Add, contentDescription = null)
                                 Text(if (shortcuts.size < MAX_TV_SHORTCUTS) "Add TV app" else "Eight app limit reached")
                             }
-                            if (shortcuts != defaultTvShortcuts) {
+                            if (shortcuts != defaultShortcuts) {
                                 TextButton(onClick = { restoreTarget = RestoreTarget.SHORTCUTS }) {
                                     Text("Restore default shortcuts")
                                 }
@@ -299,7 +306,7 @@ fun RemoteSettingsDialog(
                         SettingsPage.DEVICES -> {
                             SettingsLink("Manage TVs", connectionDescription, onManageTvs)
                             if (connectionState.phase == TvConnectionPhase.CONNECTED) {
-                                connectionState.device?.let { tv ->
+                                connectionState.device?.takeIf { it.platform == TvPlatform.ANDROID_TV }?.let { tv ->
                                     SettingsToggle(
                                         title = "TCL Inputs via AVA Connect",
                                         detail = "Open the native Inputs panel on ${tv.name}. Requires AVA Connect on the TV.",
@@ -314,9 +321,13 @@ fun RemoteSettingsDialog(
                                 detail = "Show or hide the D-pad and Touchpad selector on the home screen.",
                                 enabled = RemoteOption.NAVIGATION_SELECTOR in options,
                             ) { onOptionChange(RemoteOption.NAVIGATION_SELECTOR, it) }
-                            CONTROL_OPTIONS.forEach { (option, label) ->
-                                SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
-                            }
+                            CONTROL_OPTIONS
+                                .filterNot { (option, _) ->
+                                    platform == TvPlatform.WEBOS && option == RemoteOption.MICROPHONE
+                                }
+                                .forEach { (option, label) ->
+                                    SettingsToggle(label, enabled = option in options) { onOptionChange(option, it) }
+                                }
                         }
                         SettingsPage.BEHAVIOR -> {
                             SettingsToggle(
@@ -394,16 +405,16 @@ fun RemoteSettingsDialog(
             text = {
                 Text(
                     if (resetRemote) {
-                        "This resets the layout and button behavior and replaces the current TV’s shortcuts with the four defaults. Your paired TVs stay saved."
+                        "This resets the layout and button behavior and replaces the current TV’s shortcuts with its defaults. Your paired TVs stay saved."
                     } else {
-                        "This replaces your shortcuts with the four default apps."
+                        "This replaces your shortcuts with ${defaultShortcuts.joinToString { it.name }}."
                     },
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     restoreTarget = null
-                    if (resetRemote) onRestoreDefaults() else onShortcutsChange(defaultTvShortcuts)
+                    if (resetRemote) onRestoreDefaults() else onShortcutsChange(defaultShortcuts)
                 }) { Text("Restore") }
             },
             dismissButton = {
@@ -559,6 +570,8 @@ private fun SettingsLink(title: String, detail: String, onClick: () -> Unit) {
 private fun AddTvAppForm(
     existingShortcuts: List<TvAppShortcut>,
     initialShortcut: TvAppShortcut?,
+    platform: TvPlatform,
+    installedApps: List<TvInstalledApp>?,
     onSave: (TvAppShortcut) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -601,7 +614,7 @@ private fun AddTvAppForm(
             }
         }
     }
-    val selectedIconBitmap = rememberShortcutIconBitmap(iconUri, packageField.text.trim()).value
+    val selectedIconBitmap = rememberShortcutIconBitmap(iconUri, packageField.text.trim(), name.trim()).value
 
     OutlinedTextField(
         value = name,
@@ -621,24 +634,22 @@ private fun AddTvAppForm(
             .filterNot { it.packageName == initialShortcut?.packageName }
             .map { it.packageName }
             .toSet()
-        shortcutApps.asSequence()
-            .filter { it.name.contains(query, ignoreCase = true) }
-            .filterNot { app -> app.packageIds.any { it in otherPackageIds } }
+        shortcutSuggestions(platform, installedApps, packageField.text.trim())
+            .filter { suggestion -> suggestion.matchesQuery(query) }
+            .filterNot { suggestion -> suggestion.allIds.any { it in otherPackageIds } }
             .sortedByDescending { it.name.startsWith(query, ignoreCase = true) }
             .take(4)
             .forEach { app ->
                 TextButton(
                     onClick = {
                         name = app.name
-                        val packageId = app.packageIds.firstOrNull { it == packageField.text.trim() }
-                            ?: app.packageIds.first()
-                        packageField = TextFieldValue(packageId)
+                        packageField = TextFieldValue(app.id)
                         showNameSuggestions = false
                         validationMessage = null
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    ShortcutIcon(TvAppShortcut(app.name, app.packageIds.first()), Modifier.size(22.dp))
+                    ShortcutIcon(TvAppShortcut(app.name, app.id), Modifier.size(22.dp))
                     Text(app.name, modifier = Modifier.padding(start = 10.dp))
                 }
             }
@@ -651,8 +662,8 @@ private fun AddTvAppForm(
             packageField = entered
         },
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("TV package ID") },
-        placeholder = { Text("com.example.tvapp") },
+        label = { Text(if (platform == TvPlatform.WEBOS) "webOS app ID" else "TV package ID") },
+        placeholder = { Text(if (platform == TvPlatform.WEBOS) "netflix" else "com.example.tvapp") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri,
@@ -731,7 +742,11 @@ private fun AddTvAppForm(
         )
     }
     Text(
-        text = "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Choose a PNG, JPEG, WebP, or SVG file, or paste a direct HTTPS link to one.",
+        text = if (platform == TvPlatform.WEBOS) {
+            "Type the app’s name and pick it from the suggestions to fill in its webOS app ID. Apps installed on the connected TV are suggested. Choose a PNG, JPEG, WebP, or SVG file, or paste a direct HTTPS link to one."
+        } else {
+            "Use the package ID shown in the TV app's information screen. com.example.tvapp is only a format example. Choose a PNG, JPEG, WebP, or SVG file, or paste a direct HTTPS link to one."
+        },
         color = RemoteMuted,
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = 8.dp),
@@ -765,13 +780,19 @@ private fun AddTvAppForm(
                 } ?: true
                 when {
                     name.isBlank() -> validationMessage = "Enter an app name."
-                    !PACKAGE_ID.matches(normalizedPackage) ->
+                    platform == TvPlatform.ANDROID_TV && !PACKAGE_ID.matches(normalizedPackage) ->
                         validationMessage = "Enter a valid package ID, such as com.example.tvapp."
+                    platform == TvPlatform.WEBOS && !WEBOS_APP_ID.matches(normalizedPackage) ->
+                        validationMessage = "Enter a valid webOS app ID, such as netflix."
                     existingShortcuts.any {
                         it.packageName == normalizedPackage &&
                             it.packageName != initialShortcut?.packageName
                     } ->
-                        validationMessage = "That package ID is already in your shortcuts."
+                        validationMessage = if (platform == TvPlatform.WEBOS) {
+                            "That app ID is already in your shortcuts."
+                        } else {
+                            "That package ID is already in your shortcuts."
+                        }
                     normalizedImageUrl != null && !imageUrlIsHttps ->
                         validationMessage = "Use a complete HTTPS link to an image."
                     normalizedImageUrl != null -> scope.launch {
@@ -1036,7 +1057,7 @@ fun ShortcutIcon(
     shortcut: TvAppShortcut,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap by rememberShortcutIconBitmap(shortcut.iconUri, shortcut.packageName)
+    val bitmap by rememberShortcutIconBitmap(shortcut.iconUri, shortcut.packageName, shortcut.name)
     val icon = bitmap
     if (icon == null) {
         Icon(Icons.Filled.Tv, contentDescription = null, modifier = modifier, tint = RemoteText)
@@ -1051,13 +1072,45 @@ fun ShortcutIcon(
 }
 
 private val PACKAGE_ID = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+private val WEBOS_APP_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+private class ShortcutSuggestion(
+    val name: String,
+    val id: String,
+    val title: String = name,
+    val allIds: List<String> = listOf(id),
+) {
+    fun matchesQuery(query: String) =
+        name.contains(query, ignoreCase = true) || title.contains(query, ignoreCase = true)
+}
+
+/**
+ * Apps to suggest for the selected TV. A connected webOS TV suggests only the apps it has;
+ * otherwise known apps with an ID on the TV's platform are suggested.
+ */
+private fun shortcutSuggestions(
+    platform: TvPlatform,
+    installedApps: List<TvInstalledApp>?,
+    currentId: String,
+): List<ShortcutSuggestion> {
+    if (platform == TvPlatform.WEBOS && installedApps != null) {
+        return installedApps.map { app ->
+            ShortcutSuggestion(TvAppCatalog.match(app.id, app.title)?.name ?: app.title, app.id, app.title)
+        }
+    }
+    return TvAppCatalog.apps.mapNotNull { app ->
+        val ids = app.ids(platform)
+        val id = ids.firstOrNull { it == currentId } ?: ids.firstOrNull() ?: return@mapNotNull null
+        ShortcutSuggestion(app.name, id, allIds = ids)
+    }
+}
 
 private data class ShortcutArtwork(val bitmap: ImageBitmap, val tint: ColorFilter?)
 
 @Composable
-private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String): State<ShortcutArtwork?> {
+private fun rememberShortcutIconBitmap(iconUri: String?, packageName: String, name: String?): State<ShortcutArtwork?> {
     val context = LocalContext.current
-    val asset = shortcutIconAssets[packageName]
+    val asset = shortcutIconAsset(packageName, name)
     return produceState<ShortcutArtwork?>(initialValue = null, iconUri, asset, context) {
         value = withContext(Dispatchers.IO) {
             val customIcon = iconUri?.let { reference ->

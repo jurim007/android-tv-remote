@@ -14,3 +14,11 @@ internal val defaultTvShortcuts = listOf(
     TvAppShortcut("Prime Video", "com.amazon.amazonvideo.livingroom"),
     TvAppShortcut("Disney+", "com.disney.disneyplus"),
 )
+
+/** Used for webOS TVs until the TV reports its installed apps. */
+internal val defaultWebOsShortcuts = listOf(
+    TvAppShortcut("YouTube", "youtube.leanback.v4"),
+    TvAppShortcut("Netflix", "netflix"),
+    TvAppShortcut("Prime Video", "amazon"),
+    TvAppShortcut("Disney+", "com.disney.disneyplus-prod"),
+)

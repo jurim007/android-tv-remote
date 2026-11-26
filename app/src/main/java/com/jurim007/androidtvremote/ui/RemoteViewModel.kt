@@ -5,11 +5,11 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.jurim007.androidtvremote.data.AndroidTvRemoteController
 import com.jurim007.androidtvremote.data.AppShortcutPreferences
 import com.jurim007.androidtvremote.data.AppUpdate
 import com.jurim007.androidtvremote.data.AppUpdateInstaller
 import com.jurim007.androidtvremote.data.GitHubAppUpdates
+import com.jurim007.androidtvremote.data.TvRemoteRouter
 import com.jurim007.androidtvremote.data.UpdateSignatureMismatch
 import com.jurim007.androidtvremote.data.UpdateVerificationFailed
 import com.jurim007.androidtvremote.data.VerifiedUpdate
@@ -17,9 +17,12 @@ import com.jurim007.androidtvremote.domain.PressAndHoldController
 import com.jurim007.androidtvremote.domain.RemoteCommand
 import com.jurim007.androidtvremote.domain.RemoteOption
 import com.jurim007.androidtvremote.data.protocol.TvRemoteProtocol
+import com.jurim007.androidtvremote.domain.TvAppCatalog
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
+import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.domain.TvDevice
+import com.jurim007.androidtvremote.domain.TvPlatform
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -33,7 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
-    private val remoteController = AndroidTvRemoteController(application)
+    private val remoteController = TvRemoteRouter(application)
     private val pressAndHoldController =
         PressAndHoldController(remoteController)
     private val shortcutPreferences = AppShortcutPreferences(application)
@@ -69,6 +72,32 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val saved = shortcutPreferences.savedTvs.first()
             val selectedId = shortcutPreferences.selectedTvId.first()
             saved.firstOrNull { it.id == selectedId }?.let(::connect)
+        }
+        viewModelScope.launch {
+            connectionState.collect(::saveDetectedShortcuts)
+        }
+    }
+
+    /** The shortcuts "Restore defaults" uses for a TV, detected from its apps when possible. */
+    internal fun defaultShortcuts(device: TvDevice?, state: TvConnectionState): List<TvAppShortcut> =
+        TvAppCatalog.defaultShortcuts(
+            device?.platform ?: TvPlatform.ANDROID_TV,
+            state.installedApps?.takeIf { state.device?.id == device?.id },
+        )
+
+    /** Gives a newly connected webOS TV shortcuts for the apps it actually has. */
+    private suspend fun saveDetectedShortcuts(state: TvConnectionState) {
+        val device = state.device ?: return
+        if (state.phase != TvConnectionPhase.CONNECTED || device.platform != TvPlatform.WEBOS) return
+        if (state.installedApps == null) return
+        try {
+            if (!shortcutPreferences.hasSavedShortcuts(device.id)) {
+                shortcutPreferences.saveShortcuts(device.id, defaultShortcuts(device, state))
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            reportFailure("Could not save the TV’s app shortcuts", error)
         }
     }
 
@@ -209,8 +238,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun send(command: RemoteCommand) {
-        val deviceId = connectionState.value.device?.id
-        val tvCommand = if (command == RemoteCommand.Source && deviceId in tclInputsTvIds.value) {
+        val device = connectionState.value.device
+        val tvCommand = if (command == RemoteCommand.Source && device?.platform == TvPlatform.ANDROID_TV &&
+            device.id in tclInputsTvIds.value
+        ) {
             RemoteCommand.LaunchApp("com.tcl.suspension")
         } else {
             command
@@ -290,6 +321,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 shortcutPreferences.restoreRemoteDefaults(tvId)
+                saveDetectedShortcuts(connectionState.value)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -361,7 +393,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun beginPairing(device: TvDevice) {
         viewModelScope.launch {
             try {
-                remoteController.beginPairing(device)
+                val paired = remoteController.beginPairing(device)
+                if (paired != null) {
+                    // webOS TVs approve the connection on screen, so there's no code to enter.
+                    shortcutPreferences.saveTv(paired)
+                    remoteController.connect(paired)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

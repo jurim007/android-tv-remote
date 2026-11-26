@@ -194,7 +194,7 @@ fun TvConnectionDialog(
                 }
                 Text("Nearby TVs", color = RemoteMuted)
                 if (discoveredDevices.isEmpty()) {
-                    Text("Searching for Android TV devices…", color = RemoteMuted)
+                    Text("Searching for TVs…", color = RemoteMuted)
                 } else {
                     discoveredDevices.forEach { device ->
                         TvDeviceRow(

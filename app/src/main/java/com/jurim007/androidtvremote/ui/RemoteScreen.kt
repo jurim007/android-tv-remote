@@ -127,6 +127,7 @@ import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvConnectionPhase
 import com.jurim007.androidtvremote.domain.TvConnectionState
 import com.jurim007.androidtvremote.domain.TvDevice
+import com.jurim007.androidtvremote.domain.TvPlatform
 import com.jurim007.androidtvremote.ui.theme.RemoteAccent
 import com.jurim007.androidtvremote.ui.theme.RemoteBorder
 import com.jurim007.androidtvremote.ui.theme.RemoteMuted
@@ -167,7 +168,9 @@ internal fun RemoteScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val voiceState by viewModel.voiceState.collectAsStateWithLifecycle()
-    val showMicrophone = RemoteOption.MICROPHONE in options
+    val selectedPlatform = selectedTv?.platform ?: TvPlatform.ANDROID_TV
+    // webOS can't take voice from a phone, so the microphone is hidden for those TVs.
+    val showMicrophone = RemoteOption.MICROPHONE in options && selectedPlatform != TvPlatform.WEBOS
     val canUseMicrophone = connectionState.phase == TvConnectionPhase.CONNECTED &&
         connectionState.supportedFeatures and TvRemoteProtocol.VOICE_FEATURES == TvRemoteProtocol.VOICE_FEATURES
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -344,6 +347,10 @@ internal fun RemoteScreen(
                     onManageTvs = { connectionDialogMode = "manage" },
                     onShortcutsChange = { viewModel.saveShortcuts(shortcutTvId, it) },
                     connectionState = connectionState,
+                    platform = selectedPlatform,
+                    defaultShortcuts = viewModel.defaultShortcuts(selectedTv, connectionState),
+                    installedApps = connectionState.installedApps
+                        ?.takeIf { connectionState.device?.id == selectedTv?.id },
                     onDismiss = { settingsOpen = false },
                 )
             }
@@ -587,8 +594,8 @@ private fun AppShortcutsGrid(
                         ) {
                             ShortcutIcon(
                                 shortcut = shortcut,
-                                modifier = if (shortcut.packageName == "com.amazon.amazonvideo.livingroom" &&
-                                    shortcut.iconUri == null
+                                modifier = if (shortcut.iconUri == null &&
+                                    shortcutIconAsset(shortcut.packageName, shortcut.name) == "primevideo.svg"
                                 ) {
                                     Modifier.size(width = 56.dp, height = 28.dp)
                                 } else {

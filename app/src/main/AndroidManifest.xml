@@ -7,6 +7,8 @@
 
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Lets SSDP discovery receive replies from webOS TVs. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <queries>
         <intent>
