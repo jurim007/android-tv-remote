@@ -292,8 +292,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
         lost.input.close()
     }
 
-    private suspend fun reconnect(device: TvDevice, generation: Long, attempts: Int, initialDelayMs: Long = 0) {
-        delay(initialDelayMs)
+    private suspend fun reconnect(device: TvDevice, generation: Long, attempts: Int) {
         for (attempt in 1..attempts) {
             delay(RECONNECT_DELAY_MS * minOf(attempt, 3))
             try {
@@ -412,17 +411,19 @@ class WebOsRemoteController(context: Context) : RemoteController {
             return
         }
         when (command) {
-            RemoteCommand.Power -> {
-                powerOffRequestedAt = SystemClock.elapsedRealtime()
-                // The TV often shuts down before it answers, so don't wait for a reply.
-                session.main.sendText(
-                    JSONObject().put("id", "power_off").put("type", "request").put("uri", "ssap://$TURN_OFF").toString(),
-                )
+            RemoteCommand.Power -> if (!turnOnFromStandby(session)) turnOff(session)
+            RemoteCommand.Source -> try {
+                session.main.request(LAUNCH, JSONObject().put("id", INPUT_PICKER_APP))
+            } catch (error: WebOsCommandException) {
+                // Some webOS versions don't expose the input picker as an app.
+                Log.d(TAG, "Input picker app unavailable, asking the surface manager", error)
+                lunaRequest(session, SHOW_INPUT_PICKER)
             }
-            RemoteCommand.Source -> session.main.request(LAUNCH, JSONObject().put("id", INPUT_PICKER_APP))
-            RemoteCommand.Delete -> session.main.request(DELETE_CHARACTERS, JSONObject().put("count", 1))
-            is RemoteCommand.SendText -> insertText(session, command.text)
-            is RemoteCommand.Enter -> {
+            RemoteCommand.Delete -> if (canType(session)) {
+                session.main.request(DELETE_CHARACTERS, JSONObject().put("count", 1))
+            }
+            is RemoteCommand.SendText -> if (canType(session)) insertText(session, command.text)
+            is RemoteCommand.Enter -> if (canType(session)) {
                 if (command.text.isNotBlank()) insertText(session, command.text)
                 session.main.request(SEND_ENTER)
             }
@@ -432,6 +433,82 @@ class WebOsRemoteController(context: Context) : RemoteController {
             }
             else -> emitMessage("This TV does not support that remote command.")
         }
+    }
+
+    /** Sends the power-off request, then lets go of the TV so the next press wakes it. */
+    private fun turnOff(session: Session) {
+        powerOffRequestedAt = SystemClock.elapsedRealtime()
+        // The TV often shuts down before it answers, so don't wait for a reply.
+        session.main.sendText(
+            JSONObject().put("id", "power_off").put("type", "request").put("uri", "ssap://$TURN_OFF").toString(),
+        )
+        val released = synchronized(lock) {
+            if (this.session !== session) return
+            this.session = null
+            clearHoldLocked()
+            connectionGeneration += 1
+            mutableConnectionState.value = TvConnectionState(
+                phase = TvConnectionPhase.DISCONNECTED,
+                device = session.device,
+                message = "${session.device.name} is off.",
+            )
+            true
+        }
+        if (released) {
+            session.main.closeGracefully()
+            session.input.closeGracefully()
+        }
+    }
+
+    /**
+     * Turns the TV on when it answers while in standby, as TVs with Quick Start+ do.
+     * Returns false when the TV is already on or can't report its power state.
+     */
+    private suspend fun turnOnFromStandby(session: Session): Boolean = when (readPower(session)) {
+        TvPower.SCREEN_OFF -> {
+            session.main.request(TURN_ON_SCREEN)
+            true
+        }
+        TvPower.STANDBY -> {
+            session.main.request(TURN_ON)
+            true
+        }
+        TvPower.ON, TvPower.SHUTTING_DOWN, TvPower.UNKNOWN -> false
+    }
+
+    /**
+     * YouTube on webOS draws its own keyboard, which ignores the TV's text input service, so
+     * typing there would silently do nothing.
+     */
+    private suspend fun canType(session: Session): Boolean {
+        val appId = try {
+            session.main.request(FOREGROUND_APP).optString("appId")
+        } catch (error: IOException) {
+            return true
+        }
+        if (appId.startsWith(YOUTUBE_APP_PREFIX)) {
+            emitMessage("YouTube on webOS uses its own keyboard, which can’t receive typing from your phone. Use the D-pad to type.")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Calls an internal webOS service that SSAP doesn't expose, through an alert whose close
+     * action makes the call. The alert closes immediately.
+     */
+    private suspend fun lunaRequest(session: Session, uri: String, params: JSONObject = JSONObject()) {
+        val action = JSONObject().put("uri", uri).put("params", params)
+        val alert = session.main.request(
+            CREATE_ALERT,
+            JSONObject()
+                .put("message", " ")
+                .put("buttons", JSONArray().put(JSONObject().put("label", "").put("onClick", uri).put("params", params)))
+                .put("onclose", action)
+                .put("onfail", action),
+        )
+        val alertId = alert.optString("alertId").ifBlank { throw WebOsCommandException("The TV did not create the alert.") }
+        session.main.request(CLOSE_ALERT, JSONObject().put("alertId", alertId))
     }
 
     private suspend fun insertText(session: Session, text: String) {
@@ -462,17 +539,85 @@ class WebOsRemoteController(context: Context) : RemoteController {
             )
             connectionGeneration
         }
-        val job = scope.launch {
+        powerOffRequestedAt = 0L
+        val job = scope.launch { wakeAndConnect(device, generation) }
+        synchronized(lock) {
+            if (generation == connectionGeneration) reconnectJob = job else job.cancel()
+        }
+    }
+
+    /**
+     * Sends Wake-on-LAN on every attempt, since a TV that is still shutting down ignores it,
+     * and lets go of a TV that answers while it is still shutting down.
+     */
+    private suspend fun wakeAndConnect(device: TvDevice, generation: Long) {
+        repeat(WAKE_ATTEMPTS) { attempt ->
             try {
                 sendWakePackets(device)
             } catch (error: IOException) {
                 Log.w(TAG, "Could not send Wake-on-LAN", error)
             }
-            reconnect(device, generation, WAKE_RECONNECT_ATTEMPTS, initialDelayMs = WAKE_INITIAL_DELAY_MS)
+            delay(WAKE_ATTEMPT_DELAY_MS)
+            try {
+                openSession(device, generation)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.d(TAG, "Wake attempt ${attempt + 1} did not connect", error)
+                if (error.requiresNewPairing()) {
+                    synchronized(lock) {
+                        if (generation == connectionGeneration) {
+                            reconnectJob = null
+                            setPairingRequired(device)
+                        }
+                    }
+                    return
+                }
+                return@repeat
+            }
+            val current = synchronized(lock) { session?.takeIf { generation == connectionGeneration } } ?: return
+            when (readPower(current)) {
+                TvPower.SHUTTING_DOWN -> releaseWhileWaking(current, generation)
+                TvPower.STANDBY -> return requestQuietly(current, TURN_ON)
+                TvPower.SCREEN_OFF -> return requestQuietly(current, TURN_ON_SCREEN)
+                TvPower.ON, TvPower.UNKNOWN -> return
+            }
         }
         synchronized(lock) {
-            if (generation == connectionGeneration) reconnectJob = job else job.cancel()
+            if (generation == connectionGeneration) {
+                reconnectJob = null
+                setError("Couldn’t turn on ${device.name}. Check that Turn on via Wi-Fi is enabled in the TV’s settings.", device)
+            }
         }
+    }
+
+    private fun releaseWhileWaking(current: Session, generation: Long) {
+        synchronized(lock) {
+            if (session !== current || generation != connectionGeneration) return
+            session = null
+            mutableConnectionState.value = TvConnectionState(
+                phase = TvConnectionPhase.CONNECTING,
+                device = current.device,
+                message = "Turning on ${current.device.name}…",
+            )
+        }
+        current.main.close()
+        current.input.close()
+    }
+
+    private suspend fun requestQuietly(session: Session, uri: String) {
+        try {
+            session.main.request(uri)
+        } catch (error: IOException) {
+            Log.w(TAG, "The TV did not accept $uri", error)
+        }
+    }
+
+    private suspend fun readPower(session: Session): TvPower = try {
+        classifyPower(session.main.request(POWER_STATE))
+    } catch (error: IOException) {
+        Log.d(TAG, "The TV did not report its power state", error)
+        TvPower.UNKNOWN
     }
 
     private fun sendWakePackets(device: TvDevice) {
@@ -610,13 +755,21 @@ class WebOsRemoteController(context: Context) : RemoteController {
         private const val DELETE_CHARACTERS = "com.webos.service.ime/deleteCharacters"
         private const val SEND_ENTER = "com.webos.service.ime/sendEnterKey"
         private const val INPUT_PICKER_APP = "com.webos.app.inputpicker"
+        private const val SHOW_INPUT_PICKER = "luna://com.webos.surfacemanager/showInputPicker"
+        private const val CREATE_ALERT = "system.notifications/createAlert"
+        private const val CLOSE_ALERT = "system.notifications/closeAlert"
+        private const val POWER_STATE = "com.webos.service.tvpower/power/getPowerState"
+        private const val TURN_ON = "system/turnOn"
+        private const val TURN_ON_SCREEN = "com.webos.service.tvpower/power/turnOnScreen"
+        private const val FOREGROUND_APP = "com.webos.applicationManager/getForegroundAppInfo"
+        private const val YOUTUBE_APP_PREFIX = "youtube.leanback"
 
         private const val REGISTER_TIMEOUT_MS = 10_000L
         private const val PROMPT_TIMEOUT_MS = 90_000L
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val MAX_RECONNECT_ATTEMPTS = 5
-        private const val WAKE_INITIAL_DELAY_MS = 3_000L
-        private const val WAKE_RECONNECT_ATTEMPTS = 8
+        private const val WAKE_ATTEMPT_DELAY_MS = 3_000L
+        private const val WAKE_ATTEMPTS = 10
         private const val POWER_OFF_GRACE_MS = 15_000L
         private const val HOLD_INITIAL_DELAY_MS = 420L
         private const val HOLD_REPEAT_INTERVAL_MS = 145L
@@ -658,6 +811,25 @@ class WebOsRemoteController(context: Context) : RemoteController {
             RemoteCommand.ChannelUp -> "CHANNELUP"
             RemoteCommand.ChannelDown -> "CHANNELDOWN"
             else -> null
+        }
+
+        internal enum class TvPower { ON, SCREEN_OFF, STANDBY, SHUTTING_DOWN, UNKNOWN }
+
+        /** Reads `getPowerState`, whose `processing` field is set while the TV changes state. */
+        fun classifyPower(payload: JSONObject): TvPower {
+            val state = payload.optString("state")
+            val processing = payload.optString("processing")
+            return when {
+                listOf("Off", "Suspend", "Standby").any { processing.contains(it, ignoreCase = true) } ->
+                    TvPower.SHUTTING_DOWN
+                state.equals("Power Off", ignoreCase = true) -> TvPower.SHUTTING_DOWN
+                state.equals("Screen Off", ignoreCase = true) -> TvPower.SCREEN_OFF
+                state.contains("Standby", ignoreCase = true) || state.equals("Suspend", ignoreCase = true) ->
+                    TvPower.STANDBY
+                state.equals("Active", ignoreCase = true) || state.equals("Screen Saver", ignoreCase = true) ->
+                    TvPower.ON
+                else -> TvPower.UNKNOWN
+            }
         }
 
         fun parseLaunchPoints(payload: JSONObject): List<TvInstalledApp>? {

@@ -17,7 +17,10 @@ class SavedTvEncodingTest {
             clientKey = "client-key",
             macAddresses = listOf("A8:23:FE:01:02:03"),
         )
-        val android = TvDevice("Living Room", "10.0.0.2", serverCertificateFingerprint = "CC:DD", usesUniqueClientIdentity = true)
+        val android = TvDevice(
+            "Living Room", "10.0.0.2", serverCertificateFingerprint = "CC:DD",
+            usesUniqueClientIdentity = true, isGoogleTv = true,
+        )
         val encoded = AppShortcutPreferences.encodeTvDevices(listOf(tv, android))
         assertEquals(listOf(tv, android), AppShortcutPreferences.decodeTvDevices(encoded))
     }

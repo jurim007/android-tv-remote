@@ -347,8 +347,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             }
 
             var initialImeField: TvImeField? = null
+            var initialGoogleTv: Boolean? = null
             val trackIme: (ByteArray) -> Unit = {
                 initialImeField = TvRemoteProtocol.updateImeField(it, initialImeField)
+                detectGoogleTv(it)?.let { googleTv -> initialGoogleTv = googleTv }
             }
             val configure = readRemoteUntil(socket, 1, trackIme)
             val advertisedFeatures = TvRemoteProtocol.remoteFeatures(configure)
@@ -377,6 +379,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                     phase = TvConnectionPhase.CONNECTED,
                     device = device,
                     supportedFeatures = negotiatedFeatures,
+                    detectedGoogleTv = initialGoogleTv,
                 )
                 readerJob = scope.launch { readRemoteMessages(socket, device) }
             }
@@ -686,6 +689,13 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             while (socket === remoteSocket) {
                 val message = readDelimited(socket)
                     ?: throw EOFException("The TV closed the connection.")
+                detectGoogleTv(message)?.let { googleTv ->
+                    synchronized(connectionLock) {
+                        if (socket === remoteSocket) {
+                            mutableConnectionState.update { it.copy(detectedGoogleTv = googleTv) }
+                        }
+                    }
+                }
                 val response = TvRemoteProtocol.pingResponse(message)
                 if (response != null) {
                     writeMessage(socket, response)
@@ -714,6 +724,9 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
             handleConnectionLoss(socket, device, error)
         }
     }
+
+    private fun detectGoogleTv(message: ByteArray): Boolean? =
+        TvRemoteProtocol.foregroundApp(message)?.let(TvRemoteProtocol::isGoogleTvLauncher)
 
     private fun handleConnectionLoss(socket: SSLSocket, device: TvDevice, error: IOException) {
         synchronized(connectionLock) {

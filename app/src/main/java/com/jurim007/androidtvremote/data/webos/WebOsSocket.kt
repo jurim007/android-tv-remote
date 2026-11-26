@@ -163,6 +163,14 @@ internal class WebOsSocket(
         }
     }
 
+    /** Closes after messages already queued, such as a power-off request, are sent. */
+    fun closeGracefully() {
+        if (closed.compareAndSet(false, true)) {
+            webSocket.close(NORMAL_CLOSURE, null)
+            closeReplies(EOFException("The TV connection is closed."))
+        }
+    }
+
     fun close() {
         if (closed.compareAndSet(false, true)) {
             webSocket.cancel()

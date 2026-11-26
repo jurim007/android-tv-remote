@@ -127,8 +127,11 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
         }
         dataStore.edit { preferences ->
             val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
+            // Pairing again doesn't repeat the Google TV detection, so keep the earlier result.
+            val previous = devices.firstOrNull { it.id == device.id }
+            val saved = if (device.isGoogleTv == null) device.copy(isGoogleTv = previous?.isGoogleTv) else device
             preferences[SAVED_TVS] =
-                encodeTvDevices(devices.filterNot { it.id == device.id } + device)
+                encodeTvDevices(devices.filterNot { it.id == device.id } + saved)
             if (devices.isEmpty()) {
                 val unassigned = shortcutKey(null)
                 val destination = shortcutKey(device.id)
@@ -148,6 +151,16 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                 preferences.remove(unassigned)
             }
             preferences[SELECTED_TV_ID] = device.id
+        }
+    }
+
+    suspend fun setGoogleTv(deviceId: String, isGoogleTv: Boolean) {
+        dataStore.edit { preferences ->
+            val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices) ?: return@edit
+            if (devices.none { it.id == deviceId && it.isGoogleTv != isGoogleTv }) return@edit
+            preferences[SAVED_TVS] = encodeTvDevices(
+                devices.map { if (it.id == deviceId) it.copy(isGoogleTv = isGoogleTv) else it },
+            )
         }
     }
 
@@ -243,7 +256,8 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                             .put("usesUniqueClientIdentity", device.usesUniqueClientIdentity)
                             .put("platform", device.platform.name)
                             .put("clientKey", device.clientKey)
-                            .put("macAddresses", JSONArray(device.macAddresses)),
+                            .put("macAddresses", JSONArray(device.macAddresses))
+                            .put("isGoogleTv", device.isGoogleTv),
                     )
                 }
             }.toString()
@@ -266,6 +280,7 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                     macAddresses = item.optJSONArray("macAddresses")?.let { macs ->
                         List(macs.length()) { macs.optString(it) }.filter(String::isNotBlank)
                     }.orEmpty(),
+                    isGoogleTv = if (item.has("isGoogleTv")) item.optBoolean("isGoogleTv") else null,
                 )
             }
         }

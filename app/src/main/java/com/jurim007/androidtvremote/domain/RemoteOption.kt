@@ -7,6 +7,7 @@ enum class RemoteOption(val preferenceKey: String, val enabledByDefault: Boolean
     SOURCE("show_source"),
     SHORTCUTS("show_shortcuts"),
     NAVIGATION_SELECTOR("show_navigation_mode_selector"),
+    TV_TYPE_BADGE("show_tv_type_badge"),
     MICROPHONE("show_microphone"),
     PHONE_VOLUME("phone_controls_tv_volume", enabledByDefault = false),
     VIBRATION("remote_button_vibration"),

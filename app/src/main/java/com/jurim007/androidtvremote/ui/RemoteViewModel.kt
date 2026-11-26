@@ -74,7 +74,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             saved.firstOrNull { it.id == selectedId }?.let(::connect)
         }
         viewModelScope.launch {
-            connectionState.collect(::saveDetectedShortcuts)
+            connectionState.collect { state ->
+                saveDetectedShortcuts(state)
+                saveDetectedGoogleTv(state)
+            }
         }
     }
 
@@ -84,6 +87,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             device?.platform ?: TvPlatform.ANDROID_TV,
             state.installedApps?.takeIf { state.device?.id == device?.id },
         )
+
+    /** Remembers whether a connected Android-based TV is Google TV, for its badge. */
+    private suspend fun saveDetectedGoogleTv(state: TvConnectionState) {
+        val device = state.device ?: return
+        val googleTv = state.detectedGoogleTv ?: return
+        if (device.platform != TvPlatform.ANDROID_TV) return
+        try {
+            shortcutPreferences.setGoogleTv(device.id, googleTv)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not save the TV type", error)
+        }
+    }
 
     /** Gives a newly connected webOS TV shortcuts for the apps it actually has. */
     private suspend fun saveDetectedShortcuts(state: TvConnectionState) {

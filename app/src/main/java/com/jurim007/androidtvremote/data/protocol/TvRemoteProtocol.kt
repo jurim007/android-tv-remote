@@ -195,6 +195,26 @@ internal object TvRemoteProtocol {
         return ProtoWriter().bytes(21, batch.build()).build()
     }
 
+    /** The package of the app the TV reports in the foreground, when the message carries one. */
+    fun foregroundApp(message: ByteArray): String? {
+        val inject = ProtoWire.parse(message).firstOrNull { it.number == 20 && it.wireType == 2 }?.bytes ?: return null
+        val appInfo = remoteField(inject, 1) ?: return null
+        return remoteField(appInfo, 12)?.toString(Charsets.UTF_8)?.trim()?.takeIf(String::isNotEmpty)
+    }
+
+    /**
+     * Tells Google TV from Android TV by its home screen: true for Google TV, false for
+     * Android TV, null for any other app.
+     */
+    fun isGoogleTvLauncher(packageName: String): Boolean? = when (packageName) {
+        GOOGLE_TV_LAUNCHER -> true
+        in ANDROID_TV_LAUNCHERS -> false
+        else -> null
+    }
+
+    private const val GOOGLE_TV_LAUNCHER = "com.google.android.apps.tv.launcherx"
+    private val ANDROID_TV_LAUNCHERS = setOf("com.google.android.tvlauncher", "com.google.android.leanbacklauncher")
+
     fun updateImeField(message: ByteArray, current: TvImeField?): TvImeField? {
         val fields = ProtoWire.parse(message)
         val opened = fields.firstOrNull { it.number == 20 }?.bytes

@@ -427,6 +427,7 @@ fun RemoteSettingsDialog(
 private enum class RestoreTarget { REMOTE, SHORTCUTS }
 
 private val CONTROL_OPTIONS = listOf(
+    RemoteOption.TV_TYPE_BADGE to "Show TV type badge",
     RemoteOption.VOLUME to "Show volume buttons",
     RemoteOption.CHANNEL to "Show channel buttons",
     RemoteOption.MUTE to "Show Mute",
