@@ -391,6 +391,20 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         operationMessages.tryEmit("Allow microphone access to use voice search.")
     }
 
+    /** Restores the connection right away when the app returns from the background. */
+    fun onAppForeground() {
+        viewModelScope.launch {
+            val state = connectionState.value
+            if (state.phase == TvConnectionPhase.ERROR && !state.needsPairing) {
+                // Reconnecting gave up while the phone was locked; try the selected TV again now.
+                val selectedId = shortcutPreferences.selectedTvId.first()
+                shortcutPreferences.savedTvs.first().firstOrNull { it.id == selectedId }?.let(::connect)
+            } else {
+                remoteController.checkConnection()
+            }
+        }
+    }
+
     fun startHolding(command: RemoteCommand) {
         pressAndHoldController.start(command)
     }

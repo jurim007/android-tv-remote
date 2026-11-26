@@ -186,7 +186,10 @@ internal fun RemoteScreen(
     }
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) viewModel.checkForUpdates()
+            if (event == Lifecycle.Event.ON_START) {
+                viewModel.onAppForeground()
+                viewModel.checkForUpdates()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

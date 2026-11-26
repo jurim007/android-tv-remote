@@ -61,6 +61,9 @@ class WebOsRemoteController(context: Context) : RemoteController {
     private var lastDevice: TvDevice? = null
     @Volatile
     private var powerOffRequestedAt = 0L
+    /** Whether [reconnectJob] is a Wake-on-LAN attempt rather than a plain reconnect. */
+    @Volatile
+    private var waking = false
 
     @Volatile
     private var pairingSocket: WebOsSocket? = null
@@ -248,6 +251,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
 
     private fun resetLocked(): List<WebOsSocket> {
         connectionGeneration += 1
+        waking = false
         clearHoldLocked()
         reconnectJob?.cancel()
         reconnectJob = null
@@ -258,7 +262,33 @@ class WebOsRemoteController(context: Context) : RemoteController {
         return sockets
     }
 
-    private fun handleConnectionLoss(socket: WebOsSocket, error: Throwable) {
+    override fun checkConnection() {
+        val current = synchronized(lock) {
+            session ?: run {
+                val device = mutableConnectionState.value.device
+                if (device != null && !waking && reconnectJob?.isActive == true) {
+                    reconnectJob?.cancel()
+                    val generation = connectionGeneration
+                    reconnectJob = scope.launch { reconnect(device, generation, MAX_RECONNECT_ATTEMPTS, immediate = true) }
+                }
+                return
+            }
+        }
+        scope.launch {
+            // Any reply, even an error, shows the connection still works.
+            val alive = try {
+                current.main.request(POWER_STATE, timeoutMs = LIVENESS_TIMEOUT_MS)
+                true
+            } catch (error: WebOsCommandException) {
+                true
+            } catch (error: IOException) {
+                false
+            }
+            if (!alive) handleConnectionLoss(current.main, IOException("The TV stopped responding."), immediate = true)
+        }
+    }
+
+    private fun handleConnectionLoss(socket: WebOsSocket, error: Throwable, immediate: Boolean = false) {
         val lost = synchronized(lock) {
             val current = session ?: return
             if (current.main !== socket && current.input !== socket) return
@@ -283,7 +313,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
                         device = device,
                         message = "Reconnecting to ${device.name}…",
                     )
-                    reconnectJob = scope.launch { reconnect(device, generation, MAX_RECONNECT_ATTEMPTS) }
+                    reconnectJob = scope.launch { reconnect(device, generation, MAX_RECONNECT_ATTEMPTS, immediate) }
                 }
             }
             current
@@ -292,9 +322,9 @@ class WebOsRemoteController(context: Context) : RemoteController {
         lost.input.close()
     }
 
-    private suspend fun reconnect(device: TvDevice, generation: Long, attempts: Int) {
+    private suspend fun reconnect(device: TvDevice, generation: Long, attempts: Int, immediate: Boolean = false) {
         for (attempt in 1..attempts) {
-            delay(RECONNECT_DELAY_MS * minOf(attempt, 3))
+            if (!immediate || attempt > 1) delay(RECONNECT_DELAY_MS * minOf(attempt, 3))
             try {
                 openSession(device, generation)
                 return
@@ -537,10 +567,17 @@ class WebOsRemoteController(context: Context) : RemoteController {
                 device = device,
                 message = "Turning on ${device.name}…",
             )
+            waking = true
             connectionGeneration
         }
         powerOffRequestedAt = 0L
-        val job = scope.launch { wakeAndConnect(device, generation) }
+        val job = scope.launch {
+            try {
+                wakeAndConnect(device, generation)
+            } finally {
+                synchronized(lock) { if (generation == connectionGeneration) waking = false }
+            }
+        }
         synchronized(lock) {
             if (generation == connectionGeneration) reconnectJob = job else job.cancel()
         }
@@ -771,6 +808,7 @@ class WebOsRemoteController(context: Context) : RemoteController {
         private const val WAKE_ATTEMPT_DELAY_MS = 3_000L
         private const val WAKE_ATTEMPTS = 10
         private const val POWER_OFF_GRACE_MS = 15_000L
+        private const val LIVENESS_TIMEOUT_MS = 2_500L
         private const val HOLD_INITIAL_DELAY_MS = 420L
         private const val HOLD_REPEAT_INTERVAL_MS = 145L
 
