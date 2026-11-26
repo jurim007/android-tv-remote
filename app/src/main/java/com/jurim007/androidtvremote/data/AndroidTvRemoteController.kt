@@ -191,7 +191,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
         emitMessage(message)
     }
 
-    override suspend fun beginPairing(device: TvDevice) = withContext(Dispatchers.IO) {
+    override suspend fun beginPairing(device: TvDevice): TvDevice? = withContext(Dispatchers.IO) {
         stopDiscovery()
         disconnect()
         closePendingPairing()
@@ -219,7 +219,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
             if (pairingAttempt != pairingGeneration) {
                 closePendingPairing()
-                return@withContext
+                return@withContext null
             }
             writeMessage(socket, TvRemoteProtocol.pairingRequest(certificateName))
             readPairingUntil(socket, 11)
@@ -232,7 +232,7 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
 
             if (pairingAttempt != pairingGeneration) {
                 closePendingPairing()
-                return@withContext
+                return@withContext null
             }
 
             socket.soTimeout = PAIRING_PIN_TIMEOUT_MS
@@ -242,9 +242,10 @@ class AndroidTvRemoteController(context: Context) : RemoteController {
                 message = "Enter the 6-character code shown on the TV.",
                 pairingReady = true,
             )
+            null
         } catch (error: Exception) {
             socket?.close()
-            if (pairingAttempt != pairingGeneration) return@withContext
+            if (pairingAttempt != pairingGeneration) return@withContext null
             setError("Could not start pairing with ${device.name}: ${error.message ?: "connection failed"}")
             throw error
         }

@@ -12,12 +12,14 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.jurim007.androidtvremote.domain.MAX_TV_SHORTCUTS
 import com.jurim007.androidtvremote.domain.RemoteOption
+import com.jurim007.androidtvremote.domain.TvAppCatalog
 import com.jurim007.androidtvremote.domain.TvAppShortcut
 import com.jurim007.androidtvremote.domain.TvDevice
-import com.jurim007.androidtvremote.domain.defaultTvShortcuts
+import com.jurim007.androidtvremote.domain.TvPlatform
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,12 +48,15 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
         }
         .map { preferences ->
             val tvId = preferences[SELECTED_TV_ID]
-            val shortcuts = preferences[shortcutKey(tvId)]?.let(::decodeShortcuts) ?: defaultTvShortcuts
+            val savedTvs = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
+            val platform = savedTvs.firstOrNull { it.id == tvId }?.platform ?: TvPlatform.ANDROID_TV
+            val shortcuts = preferences[shortcutKey(tvId)]?.let(::decodeShortcuts)
+                ?: TvAppCatalog.defaultShortcuts(platform, installed = null)
             RemoteLayoutPreferences(
                 shortcuts = SelectedTvShortcuts(tvId, shortcuts.take(MAX_TV_SHORTCUTS)),
                 touchpadEnabled = preferences[TOUCHPAD_ENABLED] ?: false,
                 options = readRemoteOptions(preferences),
-                savedTvs = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty(),
+                savedTvs = savedTvs,
             )
         }
 
@@ -86,6 +91,10 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
         }
     }
 
+    /** Whether shortcuts were saved for the TV, as opposed to showing its defaults. */
+    suspend fun hasSavedShortcuts(tvId: String): Boolean =
+        dataStore.data.first()[shortcutKey(tvId)] != null
+
     suspend fun saveShortcuts(tvId: String?, shortcuts: List<TvAppShortcut>) {
         dataStore.edit { preferences ->
             if (tvId == null || preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty().any { it.id == tvId }) {
@@ -113,6 +122,9 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
         requireNotNull(device.serverCertificateFingerprint) {
             "A TV must complete pairing before it can be saved."
         }
+        require(device.platform != TvPlatform.WEBOS || device.clientKey != null) {
+            "A webOS TV must accept the connection before it can be saved."
+        }
         dataStore.edit { preferences ->
             val devices = preferences[SAVED_TVS]?.let(::decodeTvDevices).orEmpty()
             preferences[SAVED_TVS] =
@@ -121,7 +133,17 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                 val unassigned = shortcutKey(null)
                 val destination = shortcutKey(device.id)
                 if (preferences[destination] == null) {
-                    preferences[unassigned]?.let { preferences[destination] = it }
+                    preferences[unassigned]?.let { encoded ->
+                        if (device.platform == TvPlatform.ANDROID_TV) {
+                            preferences[destination] = encoded
+                        } else {
+                            // Shortcuts added before any TV was paired use Android package IDs.
+                            decodeShortcuts(encoded)
+                                .mapNotNull { TvAppCatalog.translate(it, device.platform) }
+                                .takeIf { it.isNotEmpty() }
+                                ?.let { preferences[destination] = encodeShortcuts(it) }
+                        }
+                    }
                 }
                 preferences.remove(unassigned)
             }
@@ -218,7 +240,10 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                             .put("host", device.host)
                             .put("port", device.port)
                             .put("certificateFingerprint", device.serverCertificateFingerprint)
-                            .put("usesUniqueClientIdentity", device.usesUniqueClientIdentity),
+                            .put("usesUniqueClientIdentity", device.usesUniqueClientIdentity)
+                            .put("platform", device.platform.name)
+                            .put("clientKey", device.clientKey)
+                            .put("macAddresses", JSONArray(device.macAddresses)),
                     )
                 }
             }.toString()
@@ -235,6 +260,12 @@ class AppShortcutPreferences internal constructor(private val dataStore: DataSto
                         .optString("certificateFingerprint")
                         .takeIf(String::isNotBlank),
                     usesUniqueClientIdentity = item.optBoolean("usesUniqueClientIdentity", false),
+                    platform = TvPlatform.entries.firstOrNull { it.name == item.optString("platform") }
+                        ?: TvPlatform.ANDROID_TV,
+                    clientKey = item.optString("clientKey").takeIf(String::isNotBlank),
+                    macAddresses = item.optJSONArray("macAddresses")?.let { macs ->
+                        List(macs.length()) { macs.optString(it) }.filter(String::isNotBlank)
+                    }.orEmpty(),
                 )
             }
         }

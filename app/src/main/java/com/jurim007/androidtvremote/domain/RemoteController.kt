@@ -10,7 +10,11 @@ interface RemoteController {
 
     fun startDiscovery()
     fun stopDiscovery()
-    suspend fun beginPairing(device: TvDevice)
+    /**
+     * Starts pairing. Returns the paired device when the TV approves the connection without a
+     * code (webOS), or null when [completePairing] must be called with the code shown on the TV.
+     */
+    suspend fun beginPairing(device: TvDevice): TvDevice?
     suspend fun completePairing(pin: String, deviceName: String): TvDevice
     suspend fun connect(device: TvDevice)
     suspend fun cancelPendingPairing()
